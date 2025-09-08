@@ -23,6 +23,16 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq curl ca-certificates pkg-config libssl-dev build-essential git
 
+      - name: Install Rust toolchain (Cargo 1.70.0 - pre-v4 lockfile)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" toolchain install 1.70.0 --profile minimal
+          "$HOME/.cargo/bin/rustup" default 1.70.0
+          "$HOME/.cargo/bin/cargo" --version
+
       - name: Install Solana toolchain v1.17.28 (with retry and fallback)
         env:
           SOLANA_VERSION: v1.17.28
@@ -53,7 +63,7 @@ jobs:
           fi
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
           # Sanity check installation
-          ls -la "$HOME/.local/share/solana/install/active_release/bin"
+          ls -la "$HOME/.local/share/solana/install/active_release/bin" || true
           "$HOME/.local/share/solana/install/active_release/bin/solana" --version
 
       - name: Show tool versions
@@ -71,21 +81,32 @@ jobs:
         run: |
           set -euxo pipefail
           SOL_CARGO="$HOME/.local/share/solana/install/active_release/bin/cargo"
+          USE_CARGO=""
           if [ -x "$SOL_CARGO" ]; then
-            # Only manipulate the lockfile with Solana's cargo to avoid creating v4 lockfiles
+            USE_CARGO="$SOL_CARGO"
+          elif command -v cargo >/dev/null 2>&1; then
+            USE_CARGO="$(command -v cargo)"
+          elif [ -x "$HOME/.cargo/bin/cargo" ]; then
+            USE_CARGO="$HOME/.cargo/bin/cargo"
+          fi
+
+          if [ -n "$USE_CARGO" ]; then
+            # Ensure we don't keep a v4 lockfile produced by newer cargo
             rm -f Cargo.lock
-            "$SOL_CARGO" --version
-            "$SOL_CARGO" update -p ahash --precise 0.8.7 || "$SOL_CARGO" update -p ahash || true
+            "$USE_CARGO" --version || true
+            "$USE_CARGO" update -p ahash --precise 0.8.7 || "$USE_CARGO" update -p ahash || true
           else
-            echo "[info] Solana cargo not found; skipping lockfile manipulation to avoid generating incompatible v4 lockfiles"
+            echo "[info] No cargo available; skipping lockfile manipulation"
           fi
 
       - name: Build basalt_inscription program (SBF)
         shell: bash
         working-directory: programs/basalt_inscription
         run: |
-          # Always remove Cargo.lock to avoid incompatibilities (v4 lockfiles) and let cargo-build-sbf regenerate a compatible one
+          set -euxo pipefail
+          echo "[info] Pre-build: removing Cargo.lock to avoid v4 format issues"
           rm -f Cargo.lock || true
+          ls -l || true
 
           # Use full path as fallback in case PATH update fails for any reason
           if ! command -v cargo-build-sbf >/dev/null 2>&1; then
