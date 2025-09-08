@@ -84,17 +84,8 @@ jobs:
         shell: bash
         working-directory: programs/basalt_inscription
         run: |
-          # Guard against incompatible Cargo.lock: remove if it's v4 or if Solana cargo isn't available to regenerate safely
-          SOL_CARGO="$HOME/.local/share/solana/install/active_release/bin/cargo"
-          if [ -f Cargo.lock ]; then
-            if [ ! -x "$SOL_CARGO" ]; then
-              echo "[warn] Solana cargo not present; removing Cargo.lock to avoid v4 parse issues"
-              rm -f Cargo.lock
-            elif grep -qE '^version\s*=\s*4(\s|$)' Cargo.lock; then
-              echo "[warn] Detected Cargo.lock v4; removing to let cargo-build-sbf regenerate a compatible lockfile"
-              rm -f Cargo.lock
-            fi
-          fi
+          # Always remove Cargo.lock to avoid incompatibilities (v4 lockfiles) and let cargo-build-sbf regenerate a compatible one
+          rm -f Cargo.lock || true
 
           # Use full path as fallback in case PATH update fails for any reason
           if ! command -v cargo-build-sbf >/dev/null 2>&1; then
