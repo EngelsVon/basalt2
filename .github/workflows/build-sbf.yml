@@ -64,6 +64,14 @@ jobs:
           cargo --version
           cargo-build-sbf --version
 
+      - name: Ensure ahash in lockfile is >= 0.8.7 (best-effort)
+        shell: bash
+        working-directory: programs/basalt_inscription
+        run: |
+          set -euxo pipefail
+          # Try to pin ahash to 0.8.7 in the lockfile (ignores errors if ambiguous or not present)
+          cargo update -p ahash --precise 0.8.7 || cargo update -p ahash || true
+
       - name: Build basalt_inscription program (SBF)
         shell: bash
         working-directory: programs/basalt_inscription
