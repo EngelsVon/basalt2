@@ -66,12 +66,13 @@ jobs:
 
       - name: Build basalt_inscription program (SBF)
         shell: bash
+        working-directory: programs/basalt_inscription
         run: |
           # Use full path as fallback in case PATH update fails for any reason
           if ! command -v cargo-build-sbf >/dev/null 2>&1; then
-            "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v programs/basalt_inscription
+            "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v
           else
-            cargo-build-sbf -v programs/basalt_inscription
+            cargo-build-sbf -v
           fi
 
       - name: Upload SBF artifacts
