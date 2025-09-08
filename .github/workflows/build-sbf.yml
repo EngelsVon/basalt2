@@ -26,19 +26,32 @@ jobs:
       - name: Install Solana toolchain v1.17.28 (includes cargo, rustc, cargo-build-sbf)
         env:
           SOLANA_VERSION: v1.17.28
+        shell: bash
         run: |
+          set -euxo pipefail
           curl -sSfL https://release.solana.com/${SOLANA_VERSION}/install | sh -s -
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          # Sanity check installation
+          ls -la "$HOME/.local/share/solana/install/active_release/bin"
+          "$HOME/.local/share/solana/install/active_release/bin/solana" --version
 
       - name: Show tool versions
+        shell: bash
         run: |
+          which solana || true
           solana --version
           cargo --version
           cargo-build-sbf --version
 
       - name: Build basalt_inscription program (SBF)
+        shell: bash
         run: |
-          cargo-build-sbf -v programs/basalt_inscription
+          # Use full path as fallback in case PATH update fails for any reason
+          if ! command -v cargo-build-sbf >/dev/null 2>&1; then
+            "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v programs/basalt_inscription
+          else
+            cargo-build-sbf -v programs/basalt_inscription
+          fi
 
       - name: Upload SBF artifacts
         uses: actions/upload-artifact@v4
