@@ -62,17 +62,28 @@ jobs:
           which solana || true
           which cargo || true
           solana --version
-          cargo --version
-          cargo-build-sbf --version
+          cargo --version || true
+          cargo-build-sbf --version || true
 
-      - name: Ensure ahash in lockfile is >= 0.8.7 (best-effort, using Solana cargo)
+      - name: Ensure ahash in lockfile is >= 0.8.7 (best-effort)
         shell: bash
         working-directory: programs/basalt_inscription
         run: |
           set -euxo pipefail
-          # If a lockfile from a newer system cargo exists (v4), remove it so Solana's cargo can regenerate
+          # If a lockfile from a newer system cargo exists (v4), remove it so available cargo can regenerate
           rm -f Cargo.lock
           SOL_CARGO="$HOME/.local/share/solana/install/active_release/bin/cargo"
+          if [ ! -x "$SOL_CARGO" ]; then
+            echo "[warn] Solana-provided cargo not found at $SOL_CARGO"
+            if command -v cargo >/dev/null 2>&1; then
+              SOL_CARGO="$(command -v cargo)"
+            else
+              echo "[info] Installing Rust toolchain to obtain cargo..."
+              curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 https://sh.rustup.rs | sh -s -- -y
+              echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+              SOL_CARGO="$HOME/.cargo/bin/cargo"
+            fi
+          fi
           "$SOL_CARGO" --version
           # Try to pin ahash to 0.8.7 in the lockfile; fall back to a general update; never fail the job here
           "$SOL_CARGO" update -p ahash --precise 0.8.7 || "$SOL_CARGO" update -p ahash || true
