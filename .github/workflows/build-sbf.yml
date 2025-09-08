@@ -70,28 +70,25 @@ jobs:
         working-directory: programs/basalt_inscription
         run: |
           set -euxo pipefail
-          # If a lockfile from a newer system cargo exists (v4), remove it so available cargo can regenerate
-          rm -f Cargo.lock
           SOL_CARGO="$HOME/.local/share/solana/install/active_release/bin/cargo"
-          if [ ! -x "$SOL_CARGO" ]; then
-            echo "[warn] Solana-provided cargo not found at $SOL_CARGO"
-            if command -v cargo >/dev/null 2>&1; then
-              SOL_CARGO="$(command -v cargo)"
-            else
-              echo "[info] Installing Rust toolchain to obtain cargo..."
-              curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 https://sh.rustup.rs | sh -s -- -y
-              echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-              SOL_CARGO="$HOME/.cargo/bin/cargo"
-            fi
+          if [ -x "$SOL_CARGO" ]; then
+            # Only manipulate the lockfile with Solana's cargo to avoid creating v4 lockfiles
+            rm -f Cargo.lock
+            "$SOL_CARGO" --version
+            "$SOL_CARGO" update -p ahash --precise 0.8.7 || "$SOL_CARGO" update -p ahash || true
+          else
+            echo "[info] Solana cargo not found; skipping lockfile manipulation to avoid generating incompatible v4 lockfiles"
           fi
-          "$SOL_CARGO" --version
-          # Try to pin ahash to 0.8.7 in the lockfile; fall back to a general update; never fail the job here
-          "$SOL_CARGO" update -p ahash --precise 0.8.7 || "$SOL_CARGO" update -p ahash || true
 
       - name: Build basalt_inscription program (SBF)
         shell: bash
         working-directory: programs/basalt_inscription
         run: |
+          # If a v4 lockfile slipped in from a newer cargo, remove it to let cargo-build-sbf regenerate a compatible one
+          if [ -f Cargo.lock ] && grep -qE '^version\s*=\s*4(\s|$)' Cargo.lock; then
+            echo "[warn] Detected Cargo.lock v4; removing to let cargo-build-sbf regenerate a compatible lockfile"
+            rm -f Cargo.lock
+          fi
           # Use full path as fallback in case PATH update fails for any reason
           if ! command -v cargo-build-sbf >/dev/null 2>&1; then
             "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v
