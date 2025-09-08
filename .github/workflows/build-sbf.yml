@@ -23,14 +23,35 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq curl ca-certificates pkg-config libssl-dev build-essential git
 
-      - name: Install Solana toolchain v1.17.28 (includes cargo, rustc, cargo-build-sbf)
+      - name: Install Solana toolchain v1.17.28 (with retry and fallback)
         env:
           SOLANA_VERSION: v1.17.28
         shell: bash
         run: |
           set -euxo pipefail
-          curl -sSfL https://release.solana.com/${SOLANA_VERSION}/install | sh -s -
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
+          INSTALL_OK=0
+          # Try official installer with retries
+          if curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 "https://release.solana.com/${SOLANA_VERSION}/install" | sh -s -; then
+            INSTALL_OK=1
+          else
+            echo "[warn] Installer script failed, trying GitHub Releases fallback..."
+            ARCH=$(uname -m)
+            case "$ARCH" in
+              x86_64) TARBALL="solana-release-x86_64-unknown-linux-gnu.tar.bz2" ;;
+              aarch64) TARBALL="solana-release-aarch64-unknown-linux-gnu.tar.bz2" ;;
+              *) echo "Unsupported arch: $ARCH"; exit 1 ;;
+            esac
+            TARBALL_URL="https://github.com/solana-labs/solana/releases/download/${SOLANA_VERSION}/${TARBALL}"
+            TMPDIR=$(mktemp -d)
+            pushd "$TMPDIR"
+            curl -fL --retry 6 --retry-all-errors --connect-timeout 15 -o solana.tar.bz2 "$TARBALL_URL"
+            tar xjf solana.tar.bz2
+            mkdir -p "$HOME/.local/share/solana/install/active_release"
+            # Move extracted release into active_release
+            mv solana-release/* "$HOME/.local/share/solana/install/active_release"
+            popd
+          fi
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
           # Sanity check installation
           ls -la "$HOME/.local/share/solana/install/active_release/bin"
           "$HOME/.local/share/solana/install/active_release/bin/solana" --version
