@@ -1,0 +1,25 @@
+[package]
+name = "basalt_inscription"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "basalt_inscription"
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+anchor-lang = "0.29.0"
+solana-program = "=1.17.28"
+
+[patch.crates-io]
+# Pin ahash to a version that fixed auto-enabling the `stdsimd` feature on some toolchains
+ahash = "=0.8.7"
+
+[profile.release]
+opt-level = "s"
+panic = "abort"
+codegen-units = 1
+lto = "thin"

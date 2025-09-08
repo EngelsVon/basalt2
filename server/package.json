@@ -1,0 +1,33 @@
+{
+  "name": "basalt-server",
+  "version": "1.0.0",
+  "description": "Basalt blockchain love witness platform backend API",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "blockchain",
+    "solana",
+    "love",
+    "inscription",
+    "api"
+  ],
+  "author": "Basalt Team",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "@solana/web3.js": "^1.87.6",
+    "@solana/spl-memo": "^0.2.5",
+    "helmet": "^7.1.0",
+    "morgan": "^1.10.0",
+    "express-rate-limit": "^7.1.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

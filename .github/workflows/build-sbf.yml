@@ -1,0 +1,92 @@
+name: Build SBF Program (Solana v1.17.28)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'programs/**'
+      - '.github/workflows/build-sbf.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl ca-certificates pkg-config libssl-dev build-essential git
+      - name: Install Solana toolchain v1.17.28
+        env:
+          SOLANA_VERSION: v1.17.28
+        run: |
+          curl -sSfL https://release.solana.com/${SOLANA_VERSION}/install | sh -s -
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Show tool versions
+        run: |
+          solana --version
+          cargo --version || true
+          cargo-build-sbf --version || true
+      - name: Make script executable
+        run: chmod +x .tools/build_sbf.sh
+      - name: Build basalt_inscription via script
+        run: .tools/build_sbf.sh
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbf-artifacts
+          path: |
+            target/deploy/*
+            programs/basalt_inscription/target/deploy/*
+
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'programs/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/build-sbf.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq curl ca-certificates pkg-config libssl-dev build-essential git
+
+      - name: Install Solana toolchain v1.17.28 (includes cargo, rustc, cargo-build-sbf)
+        env:
+          SOLANA_VERSION: v1.17.28
+        run: |
+          curl -sSfL https://release.solana.com/${SOLANA_VERSION}/install | sh -s -
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Show tool versions
+        run: |
+          solana --version
+          cargo --version
+          cargo-build-sbf --version
+
+      - name: Build basalt_inscription program (SBF)
+        run: |
+          cargo-build-sbf -v programs/basalt_inscription
+
+      - name: Upload SBF artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: basalt_sbf_artifacts
+          path: |
+            target/deploy/*.so
+            target/deploy/*.json
+            target/deploy/*.key
+          if-no-files-found: error
