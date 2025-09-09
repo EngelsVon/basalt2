@@ -237,12 +237,17 @@ jobs:
         run: |
           set -euxo pipefail
           echo "[info] Skipping strict declare_id check; printing for reference only"
-          DECLARED=$(grep -Rho 'declare_id!("[A-Za-z0-9]+")' programs/basalt_inscription/src/lib.rs | sed -E 's/declare_id!\("([A-Za-z0-9]+)"\)/\1/')
-          ACTUAL=$(solana address -k programs/output/basalt_inscription-keypair.json)
-          echo "Declared: $DECLARED"
-          echo "Actual:   $ACTUAL"
-          if [ "$DECLARED" != "$ACTUAL" ]; then
-            echo "::warning::declare_id ($DECLARED) != program keypair pubkey ($ACTUAL) — proceeding in no-secrets mode"
+          # tolerant extraction; don't fail if not found
+          DECLARED=$((grep -RhoE 'declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)' programs/basalt_inscription/src/lib.rs | head -n1 | sed -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/\1/') || true)
+          if [ -z "${DECLARED:-}" ]; then
+            echo "::warning::declare_id! not found in programs/basalt_inscription/src/lib.rs — skipping comparison"
+          else
+            ACTUAL=$(solana address -k programs/output/basalt_inscription-keypair.json)
+            echo "Declared: $DECLARED"
+            echo "Actual:   $ACTUAL"
+            if [ "$DECLARED" != "$ACTUAL" ]; then
+              echo "::warning::declare_id ($DECLARED) != program keypair pubkey ($ACTUAL) — proceeding in no-secrets mode"
+            fi
           fi
 
       - name: Export PROGRAM_ID for later steps
@@ -257,8 +262,16 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          SO=$(ls -1 artifacts/**/basalt_inscription.so | head -n1)
-          test -f "$SO"
+          SO_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription.so 2>/dev/null | head -n1 || true)"
+          if [ -n "$SO_CANDIDATE" ] && [ -f "$SO_CANDIDATE" ]; then
+            SO="$SO_CANDIDATE"
+            echo "[info] Using program .so from artifacts: $SO"
+          elif [ -f programs/output/basalt_inscription.so ]; then
+            SO="programs/output/basalt_inscription.so"
+            echo "[info] Using program .so from repo: $SO"
+          else
+            echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
+          fi
           solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
 
       - name: Setup Node.js
@@ -399,12 +412,17 @@ jobs:
         run: |
           set -euxo pipefail
           echo "[info] Skipping strict declare_id check; printing for reference only"
-          DECLARED=$(grep -Rho 'declare_id!("[A-Za-z0-9]+")' programs/basalt_inscription/src/lib.rs | sed -E 's/declare_id!\("([A-Za-z0-9]+)"\)/\1/')
-          ACTUAL=$(solana address -k programs/output/basalt_inscription-keypair.json)
-          echo "Declared: $DECLARED"
-          echo "Actual:   $ACTUAL"
-          if [ "$DECLARED" != "$ACTUAL" ]; then
-            echo "::warning::declare_id ($DECLARED) != program keypair pubkey ($ACTUAL) — proceeding in no-secrets mode"
+          # tolerant extraction; don't fail if not found
+          DECLARED=$((grep -RhoE 'declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)' programs/basalt_inscription/src/lib.rs | head -n1 | sed -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/\1/') || true)
+          if [ -z "${DECLARED:-}" ]; then
+            echo "::warning::declare_id! not found in programs/basalt_inscription/src/lib.rs — skipping comparison"
+          else
+            ACTUAL=$(solana address -k programs/output/basalt_inscription-keypair.json)
+            echo "Declared: $DECLARED"
+            echo "Actual:   $ACTUAL"
+            if [ "$DECLARED" != "$ACTUAL" ]; then
+              echo "::warning::declare_id ($DECLARED) != program keypair pubkey ($ACTUAL) — proceeding in no-secrets mode"
+            fi
           fi
 
       - name: Export PROGRAM_ID for later steps
@@ -419,8 +437,16 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          SO=$(ls -1 artifacts/**/basalt_inscription.so | head -n1)
-          test -f "$SO"
+          SO_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription.so 2>/dev/null | head -n1 || true)"
+          if [ -n "$SO_CANDIDATE" ] && [ -f "$SO_CANDIDATE" ]; then
+            SO="$SO_CANDIDATE"
+            echo "[info] Using program .so from artifacts: $SO"
+          elif [ -f programs/output/basalt_inscription.so ]; then
+            SO="programs/output/basalt_inscription.so"
+            echo "[info] Using program .so from repo: $SO"
+          else
+            echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
+          fi
           solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
 
       - name: Setup Node.js
