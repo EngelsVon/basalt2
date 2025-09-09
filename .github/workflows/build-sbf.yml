@@ -68,9 +68,11 @@ jobs:
             popd
           fi
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
-          # Sanity check installation
+          # Sanity check installation (absolute path works within current step)
           ls -la "$HOME/.local/share/solana/install/active_release/bin" || true
           "$HOME/.local/share/solana/install/active_release/bin/solana" --version
+          # Also try via PATH (effective next steps, but try anyway)
+          solana --version || true
 
       - name: Show tool versions
         shell: bash
