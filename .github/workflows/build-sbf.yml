@@ -295,9 +295,6 @@ jobs:
           set -euxo pipefail
           echo "[info] No-secrets mode: using ephemeral payer and artifact program keypair; defaults to Devnet RPC"
           echo "[info] Optional: set SOLANA_PAYER_KEYPAIR_JSON / SOLANA_PROGRAM_KEYPAIR_JSON / SOLANA_RPC_URL / SERVICE_FEE_* as repo secrets to override"
-          [ -n "${{ secrets.SOLANA_PAYER_KEYPAIR_JSON || secrets.SOLANA_KEYPAIR_JSON }}" ] || { echo "::error::Missing SOLANA_PAYER_KEYPAIR_JSON (or SOLANA_KEYPAIR_JSON) secret"; exit 1; }
-          [ -n "${{ secrets.SOLANA_RPC_URL }}" ] || { echo "::error::Missing SOLANA_RPC_URL secret"; exit 1; }
-          [ -n "${{ secrets.SERVICE_FEE_WALLET }}" ] || { echo "::error::Missing SERVICE_FEE_WALLET secret"; exit 1; }
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
