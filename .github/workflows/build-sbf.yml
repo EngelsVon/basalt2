@@ -214,11 +214,21 @@ jobs:
           done
           solana balance || true
 
-          # Program keypair from build artifacts
-          PROG_KEY=$(ls -1 artifacts/**/basalt_inscription-keypair.json | head -n1)
-          test -f "$PROG_KEY"
+          # Program keypair from build artifacts (with fallback to repo)
+          PROG_KEY_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription-keypair.json 2>/dev/null | head -n1 || true)"
+          if [ -n "$PROG_KEY_CANDIDATE" ] && [ -f "$PROG_KEY_CANDIDATE" ]; then
+            PROG_KEY="$PROG_KEY_CANDIDATE"
+            echo "[info] Using program keypair from artifacts: $PROG_KEY"
+          elif [ -f programs/output/basalt_inscription-keypair.json ]; then
+            PROG_KEY="programs/output/basalt_inscription-keypair.json"
+            echo "[info] Using program keypair from repo: $PROG_KEY"
+          else
+            echo "::error::Program keypair not found in artifacts or repo (programs/output)"; exit 2
+          fi
           mkdir -p programs/output
-          cp -f "$PROG_KEY" programs/output/basalt_inscription-keypair.json
+          if [ "$PROG_KEY" != "programs/output/basalt_inscription-keypair.json" ]; then
+            cp -f "$PROG_KEY" programs/output/basalt_inscription-keypair.json
+          fi
           chmod 600 programs/output/basalt_inscription-keypair.json
           echo "Program pubkey: $(solana address -k programs/output/basalt_inscription-keypair.json)"
 
@@ -366,11 +376,21 @@ jobs:
           done
           solana balance || true
 
-          # Program keypair from build artifacts
-          PROG_KEY=$(ls -1 artifacts/**/basalt_inscription-keypair.json | head -n1)
-          test -f "$PROG_KEY"
+          # Program keypair from build artifacts (with fallback to repo)
+          PROG_KEY_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription-keypair.json 2>/dev/null | head -n1 || true)"
+          if [ -n "$PROG_KEY_CANDIDATE" ] && [ -f "$PROG_KEY_CANDIDATE" ]; then
+            PROG_KEY="$PROG_KEY_CANDIDATE"
+            echo "[info] Using program keypair from artifacts: $PROG_KEY"
+          elif [ -f programs/output/basalt_inscription-keypair.json ]; then
+            PROG_KEY="programs/output/basalt_inscription-keypair.json"
+            echo "[info] Using program keypair from repo: $PROG_KEY"
+          else
+            echo "::error::Program keypair not found in artifacts or repo (programs/output)"; exit 2
+          fi
           mkdir -p programs/output
-          cp -f "$PROG_KEY" programs/output/basalt_inscription-keypair.json
+          if [ "$PROG_KEY" != "programs/output/basalt_inscription-keypair.json" ]; then
+            cp -f "$PROG_KEY" programs/output/basalt_inscription-keypair.json
+          fi
           chmod 600 programs/output/basalt_inscription-keypair.json
           echo "Program pubkey: $(solana address -k programs/output/basalt_inscription-keypair.json)"
 
