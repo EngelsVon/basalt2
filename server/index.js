@@ -17,6 +17,9 @@ const SERVICE_FEE_RATE = parseFloat(process.env.SERVICE_FEE_RATE || '20'); // �
 // 取消下限：按用户要求无下限
 const MIN_SERVICE_FEE_LAMPORTS = 0;
 
+// Program 模式相关环境变量
+const PROGRAM_ID = process.env.PROGRAM_ID || null;
+
 // Solana连接配置 - 使用更稳定的RPC端点
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://devnet.helius-rpc.com/?api-key=demo';
 const connection = new Connection(SOLANA_RPC_URL, {
@@ -44,6 +47,54 @@ function getPriorityPreset(preset = 'medium') {
     case 'medium':
     default:
       return { cuLimit: 200_000, cuPriceMicroLamports: 50_000 };
+  }
+}
+
+// 计算 Anchor 账户鉴别符（前8字节）
+function anchorAccountDiscriminator(name) {
+  const crypto = require('crypto');
+  const hash = crypto.createHash('sha256').update(`account:${name}`).digest();
+  return hash.subarray(0, 8);
+}
+
+// 解析链上 Config 账户
+async function fetchOnchainConfig() {
+  if (!PROGRAM_ID) return null;
+  try {
+    const programKey = new PublicKey(PROGRAM_ID);
+    const [configPda] = PublicKey.findProgramAddressSync([Buffer.from('config')], programKey);
+    const info = await connection.getAccountInfo(configPda, 'confirmed');
+    if (!info || !info.data) return null;
+
+    // Anchor 账户布局: 8字节鉴别符 + fields
+    const disc = anchorAccountDiscriminator('Config');
+    if (info.data.length < 8 + 32 + 32 + 2 + 8 + 4) return null;
+    const data = Buffer.from(info.data);
+    // 可选鉴别符校验（不强制）
+    // if (!data.subarray(0, 8).equals(disc)) return null;
+
+    let offset = 8; // 跳过鉴别符
+    const authority = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const serviceFeeWallet = new PublicKey(data.subarray(offset, offset + 32));
+    offset += 32;
+    const serviceFeeBps = data.readUInt16LE(offset); // u16
+    offset += 2;
+    const minCuPrice = Number(BigInt.asUintN(64, data.readBigUInt64LE(offset))); // u64
+    offset += 8;
+    const minCuLimit = data.readUInt32LE(offset); // u32
+
+    return {
+      pda: configPda.toBase58(),
+      authority: authority.toBase58(),
+      serviceFeeWallet: serviceFeeWallet.toBase58(),
+      serviceFeeBps,
+      minCuPrice,
+      minCuLimit,
+    };
+  } catch (e) {
+    console.warn('读取链上 Config 失败:', e?.message || e);
+    return null;
   }
 }
 
@@ -77,24 +128,44 @@ app.get('/health', (req, res) => {
 });
 
 // 新增：配置查询端点，供前端展示/对齐
-app.get('/api/config', (req, res) => {
+app.get('/api/config', async (req, res) => {
   const presets = {
     low: getPriorityPreset('low'),
     medium: getPriorityPreset('medium'),
     high: getPriorityPreset('high'),
   };
-  res.json({
-    success: true,
-    data: {
-      network: NETWORK_NAME,
-      serviceFeeWallet: SERVICE_FEE_WALLET,
-      serviceFeeRate: SERVICE_FEE_RATE,
-      priorityPresets: presets,
-      defaultPriority: 'medium',
-      programMode: false,
-      programId: process.env.PROGRAM_ID || null,
-    }
-  });
+  try {
+    const onchain = await fetchOnchainConfig();
+    const programMode = Boolean(PROGRAM_ID);
+
+    res.json({
+      success: true,
+      data: {
+        network: NETWORK_NAME,
+        serviceFeeWallet: onchain?.serviceFeeWallet || SERVICE_FEE_WALLET,
+        serviceFeeRate: onchain ? (onchain.serviceFeeBps / 100) : SERVICE_FEE_RATE,
+        priorityPresets: presets,
+        defaultPriority: 'medium',
+        programMode,
+        programId: PROGRAM_ID,
+        programConfig: onchain, // 便于前端取用 serviceFeeWallet/bps 等
+      }
+    });
+  } catch (e) {
+    res.json({
+      success: true,
+      data: {
+        network: NETWORK_NAME,
+        serviceFeeWallet: SERVICE_FEE_WALLET,
+        serviceFeeRate: SERVICE_FEE_RATE,
+        priorityPresets: presets,
+        defaultPriority: 'medium',
+        programMode: Boolean(PROGRAM_ID),
+        programId: PROGRAM_ID,
+        programConfig: null,
+      }
+    });
+  }
 });
 
 // 网络状态端点，便于前端展示当前网络
@@ -151,9 +222,12 @@ app.post('/api/inscription/calculate-fee', async (req, res) => {
     // 合计“网络费” = 基础费 + 优先费（不含服务费）
     const networkFee = baseNetworkFee + priorityFeeLamports;
 
-    // 服务费 = 优先费的 SERVICE_FEE_RATE%
-    const rate = isNaN(SERVICE_FEE_RATE) ? 0 : SERVICE_FEE_RATE;
-    const rawServiceFee = Math.floor(priorityFeeLamports * (rate / 100));
+    // 如果有链上配置，使用链上 service_fee_bps，否则使用本地 SERVICE_FEE_RATE
+    const onchain = await fetchOnchainConfig();
+    const bps = onchain ? onchain.serviceFeeBps : Math.round((isNaN(SERVICE_FEE_RATE) ? 0 : SERVICE_FEE_RATE) * 100);
+
+    // 服务费 = 优先费的 bps/10000（向下取整以避免前端高估；合约内部使用向上取整，前端仅做展示与预估）
+    const rawServiceFee = Math.floor(priorityFeeLamports * (bps / 10000));
     const serviceFee = Math.max(rawServiceFee, MIN_SERVICE_FEE_LAMPORTS);
 
     const totalFee = networkFee + serviceFee;
@@ -167,9 +241,9 @@ app.post('/api/inscription/calculate-fee', async (req, res) => {
         totalFee,
         totalFeeSOL,
         serviceFeeSOL: serviceFee / LAMPORTS_PER_SOL,
-        serviceFeeWallet: SERVICE_FEE_WALLET,
+        serviceFeeWallet: onchain?.serviceFeeWallet || SERVICE_FEE_WALLET,
         type,
-        // 诊断信息（不会在前端使用，但便于调试）
+        // 诊断信息
         debug: {
           baseNetworkFee,
           priorityFeeLamports,
@@ -177,6 +251,7 @@ app.post('/api/inscription/calculate-fee', async (req, res) => {
           cuPriceMicroLamports,
           priorityPreset: priority,
           network: NETWORK_NAME,
+          programMode: Boolean(PROGRAM_ID),
         }
       }
     });
