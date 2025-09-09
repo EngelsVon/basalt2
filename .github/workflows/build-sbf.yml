@@ -238,7 +238,7 @@ jobs:
           set -euxo pipefail
           echo "[info] Skipping strict declare_id check; printing for reference only"
           # tolerant extraction; don't fail if not found
-          DECLARED=$((grep -RhoE 'declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)' programs/basalt_inscription/src/lib.rs | head -n1 | sed -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/\1/') || true)
+          DECLARED="$( (grep -RhoE 'declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)' programs/basalt_inscription/src/lib.rs | head -n1 | sed -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/\1/') || true )"
           if [ -z "${DECLARED:-}" ]; then
             echo "::warning::declare_id! not found in programs/basalt_inscription/src/lib.rs — skipping comparison"
           else
@@ -413,7 +413,7 @@ jobs:
           set -euxo pipefail
           echo "[info] Skipping strict declare_id check; printing for reference only"
           # tolerant extraction; don't fail if not found
-          DECLARED=$((grep -RhoE 'declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)' programs/basalt_inscription/src/lib.rs | head -n1 | sed -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/\1/') || true)
+          DECLARED="$( (grep -RhoE 'declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)' programs/basalt_inscription/src/lib.rs | head -n1 | sed -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/\1/') || true )"
           if [ -z "${DECLARED:-}" ]; then
             echo "::warning::declare_id! not found in programs/basalt_inscription/src/lib.rs — skipping comparison"
           else
