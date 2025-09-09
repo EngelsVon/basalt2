@@ -180,7 +180,7 @@ jobs:
               BIN_DIR="$(dirname "$(find . -type f -name solana | head -n1)")"
               [ -n "${BIN_DIR}" ] || { echo "::error::Failed to locate solana binary after extracting tarball"; exit 1; }
               rm -rf "${ACTIVE_BIN%/bin}"
-              mkdir -p "$(dirname "${ACTIVE_BIN}")"
+              mkdir -p "$(dirname "${ACTIVE_BIN%/bin}")"
               ln -s "$(realpath "${BIN_DIR%/bin}")" "${ACTIVE_BIN%/bin}"
             fi
             echo "${ACTIVE_BIN}" >> "$GITHUB_PATH"
@@ -317,7 +317,7 @@ jobs:
               BIN_DIR="$(dirname "$(find . -type f -name solana | head -n1)")"
               [ -n "${BIN_DIR}" ] || { echo "::error::Failed to locate solana binary after extracting tarball"; exit 1; }
               rm -rf "${ACTIVE_BIN%/bin}"
-              mkdir -p "$(dirname "${ACTIVE_BIN}")"
+              mkdir -p "$(dirname "${ACTIVE_BIN%/bin}")"
               ln -s "$(realpath "${BIN_DIR%/bin}")" "${ACTIVE_BIN%/bin}"
             fi
             echo "${ACTIVE_BIN}" >> "$GITHUB_PATH"
