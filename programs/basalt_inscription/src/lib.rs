@@ -148,7 +148,7 @@ pub struct Inscribe<'info> {
     /// CHECK: 转账目的账户由配置给出
     #[account(mut, address = config.service_fee_wallet)]
     pub service_fee_wallet: UncheckedAccount<'info>,
-    /// CHECK: Instructions sysvar to read tx instructions
+    /// CHECK: Instructions sysvar to read tx instructions 
     #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
