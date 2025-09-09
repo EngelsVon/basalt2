@@ -156,11 +156,39 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          INSTALL_BASE="$HOME/.local/share/solana/install"
+          ACTIVE_BIN="$INSTALL_BASE/active_release/bin"
           if ! command -v solana >/dev/null 2>&1; then
-            curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 "https://release.solana.com/${SOLANA_VERSION}/install" | sh -s - || true
-            echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+            # Try official installer with retries
+            for i in 1 2 3; do
+              if curl -fsSL --retry 6 --retry-all-errors --connect-timeout 20 "https://release.solana.com/${SOLANA_VERSION}/install" | sh -s -; then
+                break
+              fi
+              echo "installer attempt $i failed, retrying in 5s..." >&2
+              sleep 5
+            done
+            # Fallback to GitHub Releases tarball if installer didn't provision active_release
+            if [ ! -x "${ACTIVE_BIN}/solana" ]; then
+              mkdir -p "${INSTALL_BASE}"
+              cd "${INSTALL_BASE}"
+              TARBALL="solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+              URL_GH="https://github.com/solana-labs/solana/releases/download/${SOLANA_VERSION}/${TARBALL}"
+              URL_ALT="https://release.solana.com/${SOLANA_VERSION}/${TARBALL}"
+              curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_GH}" || \
+              curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_ALT}"
+              tar -xjf "${TARBALL}"
+              BIN_DIR="$(dirname "$(find . -type f -name solana | head -n1)")"
+              [ -n "${BIN_DIR}" ] || { echo "::error::Failed to locate solana binary after extracting tarball"; exit 1; }
+              rm -rf "${ACTIVE_BIN%/bin}"
+              mkdir -p "$(dirname "${ACTIVE_BIN}")"
+              ln -s "$(realpath "${BIN_DIR%/bin}")" "${ACTIVE_BIN%/bin}"
+            fi
+            echo "${ACTIVE_BIN}" >> "$GITHUB_PATH"
           fi
-          solana --version
+          # Sanity checks (absolute path and PATH)
+          "${ACTIVE_BIN}/solana" --version
+          solana --version || true
+          ls -la "${ACTIVE_BIN}"
 
       - name: Configure Solana and write keypairs
         shell: bash
@@ -265,11 +293,39 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          INSTALL_BASE="$HOME/.local/share/solana/install"
+          ACTIVE_BIN="$INSTALL_BASE/active_release/bin"
           if ! command -v solana >/dev/null 2>&1; then
-            curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 "https://release.solana.com/${SOLANA_VERSION}/install" | sh -s - || true
-            echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+            # Try official installer with retries
+            for i in 1 2 3; do
+              if curl -fsSL --retry 6 --retry-all-errors --connect-timeout 20 "https://release.solana.com/${SOLANA_VERSION}/install" | sh -s -; then
+                break
+              fi
+              echo "installer attempt $i failed, retrying in 5s..." >&2
+              sleep 5
+            done
+            # Fallback to GitHub Releases tarball if installer didn't provision active_release
+            if [ ! -x "${ACTIVE_BIN}/solana" ]; then
+              mkdir -p "${INSTALL_BASE}"
+              cd "${INSTALL_BASE}"
+              TARBALL="solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+              URL_GH="https://github.com/solana-labs/solana/releases/download/${SOLANA_VERSION}/${TARBALL}"
+              URL_ALT="https://release.solana.com/${SOLANA_VERSION}/${TARBALL}"
+              curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_GH}" || \
+              curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_ALT}"
+              tar -xjf "${TARBALL}"
+              BIN_DIR="$(dirname "$(find . -type f -name solana | head -n1)")"
+              [ -n "${BIN_DIR}" ] || { echo "::error::Failed to locate solana binary after extracting tarball"; exit 1; }
+              rm -rf "${ACTIVE_BIN%/bin}"
+              mkdir -p "$(dirname "${ACTIVE_BIN}")"
+              ln -s "$(realpath "${BIN_DIR%/bin}")" "${ACTIVE_BIN%/bin}"
+            fi
+            echo "${ACTIVE_BIN}" >> "$GITHUB_PATH"
           fi
-          solana --version
+          # Sanity checks (absolute path and PATH)
+          "${ACTIVE_BIN}/solana" --version
+          solana --version || true
+          ls -la "${ACTIVE_BIN}"
 
       - name: Configure Solana and write keypairs
         shell: bash
