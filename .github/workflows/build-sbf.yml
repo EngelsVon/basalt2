@@ -236,12 +236,21 @@ jobs:
 
   deploy_on_push:
     name: Deploy to Devnet on push (auto)
-    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && secrets.SOLANA_PAYER_KEYPAIR_JSON != '' && secrets.SOLANA_RPC_URL != '' && secrets.SERVICE_FEE_WALLET != '' }}
+-    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && secrets.SOLANA_PAYER_KEYPAIR_JSON != '' && secrets.SOLANA_RPC_URL != '' && secrets.SERVICE_FEE_WALLET != '' }}
++    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
     needs: build
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
++     
++      - name: Check required secrets
++        shell: bash
++        run: |
++          set -euo pipefail
++          [ -n "${{ secrets.SOLANA_PAYER_KEYPAIR_JSON || secrets.SOLANA_KEYPAIR_JSON }}" ] || { echo "::error::Missing SOLANA_PAYER_KEYPAIR_JSON (or SOLANA_KEYPAIR_JSON) secret"; exit 1; }
++          [ -n "${{ secrets.SOLANA_RPC_URL }}" ] || { echo "::error::Missing SOLANA_RPC_URL secret"; exit 1; }
++          [ -n "${{ secrets.SERVICE_FEE_WALLET }}" ] || { echo "::error::Missing SERVICE_FEE_WALLET secret"; exit 1; }
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
