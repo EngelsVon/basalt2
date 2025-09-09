@@ -233,3 +233,104 @@ jobs:
           DEPLOYER_KEYPAIR: $HOME/.config/solana/id.json
         run: |
           node scripts/init_config.js
+
+  deploy_on_push:
+    name: Deploy to Devnet on push (auto)
+    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') && secrets.SOLANA_PAYER_KEYPAIR_JSON != '' && secrets.SOLANA_RPC_URL != '' && secrets.SERVICE_FEE_WALLET != '' }}
+    needs: build
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: basalt_sbf_artifacts
+          path: artifacts
+
+      - name: Install Solana toolchain v1.17.28
+        env:
+          SOLANA_VERSION: v1.17.28
+        shell: bash
+        run: |
+          set -euxo pipefail
+          if ! command -v solana >/dev/null 2>&1; then
+            curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 "https://release.solana.com/${SOLANA_VERSION}/install" | sh -s - || true
+            echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          fi
+          solana --version
+
+      - name: Configure Solana and write keypairs
+        shell: bash
+        env:
+          PAYER_KEY: ${{ secrets.SOLANA_PAYER_KEYPAIR_JSON || secrets.SOLANA_KEYPAIR_JSON }}
+          PROGRAM_KEY: ${{ secrets.SOLANA_PROGRAM_KEYPAIR_JSON || secrets.SOLANA_KEYPAIR_JSON }}
+          RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+        run: |
+          set -euxo pipefail
+          mkdir -p "$HOME/.config/solana"
+          if [ -z "${PAYER_KEY}" ]; then
+            echo "Missing SOLANA_PAYER_KEYPAIR_JSON (or SOLANA_KEYPAIR_JSON) secret"; exit 1
+          fi
+          printf '%s' "${PAYER_KEY}" > "$HOME/.config/solana/id.json"
+          chmod 600 "$HOME/.config/solana/id.json"
+
+          mkdir -p programs/output
+          printf '%s' "${PROGRAM_KEY:-${PAYER_KEY}}" > programs/output/basalt_inscription-keypair.json
+          chmod 600 programs/output/basalt_inscription-keypair.json
+
+          solana config set --url "${RPC_URL:-https://api.devnet.solana.com}"
+          solana config get
+          echo "Payer pubkey: $(solana address)"
+          echo "Program pubkey: $(solana address -k programs/output/basalt_inscription-keypair.json)"
+
+      - name: Verify declare_id matches program pubkey
+        shell: bash
+        run: |
+          set -euo pipefail
+          DECLARED=$(grep -Rho 'declare_id!("[A-Za-z0-9]+")' programs/basalt_inscription/src/lib.rs | sed -E 's/declare_id!\("([A-Za-z0-9]+)"\)/\1/')
+          ACTUAL=$(solana address -k programs/output/basalt_inscription-keypair.json)
+          echo "Declared: $DECLARED"
+          echo "Actual:   $ACTUAL"
+          if [ "$DECLARED" != "$ACTUAL" ]; then
+            echo "::error::declare_id ($DECLARED) does not match program keypair pubkey ($ACTUAL)"; exit 1
+          fi
+
+      - name: Export PROGRAM_ID for later steps
+        shell: bash
+        run: |
+          set -euxo pipefail
+          PID=$(solana address -k programs/output/basalt_inscription-keypair.json)
+          echo "PROGRAM_ID=$PID" >> "$GITHUB_ENV"
+          echo "PROGRAM_ID: $PID"
+
+      - name: Deploy program to Devnet
+        shell: bash
+        run: |
+          set -euxo pipefail
+          SO=$(ls -1 artifacts/**/basalt_inscription.so | head -n1)
+          test -f "$SO"
+          solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install server deps
+        working-directory: server
+        run: npm ci --prefer-offline --no-audit
+
+      - name: Initialize on-chain config (Config PDA)
+        working-directory: server
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          PROGRAM_ID: ${{ env.PROGRAM_ID }}
+          SERVICE_FEE_WALLET: ${{ secrets.SERVICE_FEE_WALLET }}
+          SERVICE_FEE_BPS: ${{ secrets.SERVICE_FEE_BPS }}
+          MIN_CU_PRICE_MICROLAMPORTS: ${{ secrets.MIN_CU_PRICE_MICROLAMPORTS }}
+          MIN_CU_LIMIT: ${{ secrets.MIN_CU_LIMIT }}
+          DEPLOYER_KEYPAIR: $HOME/.config/solana/id.json
+        run: |
+          node scripts/init_config.js
