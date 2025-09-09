@@ -200,7 +200,7 @@ jobs:
           set -euxo pipefail
           mkdir -p "$HOME/.config/solana"
           # Generate ephemeral payer (no secrets)
-          solana-keygen new --no-bip39 --silent -o "$HOME/.config/solana/id.json" -f
+          solana-keygen new --no-bip39-passphrase --silent -o "$HOME/.config/solana/id.json" -f
           chmod 600 "$HOME/.config/solana/id.json"
 
           # Use provided RPC if any, otherwise default to Devnet
