@@ -1,3 +1,4 @@
+# ci: retrigger push
 name: Build SBF Program (Solana v1.17.28)
 
 on:
