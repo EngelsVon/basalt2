@@ -138,7 +138,7 @@ jobs:
           if-no-files-found: error
 
   deploy_devnet:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true' }}
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true') || github.event_name == 'push' }}
     needs: build
     runs-on: ubuntu-22.04
     steps:
@@ -290,6 +290,16 @@ jobs:
           done
           echo "[info] Deployer balance:"
           solana balance || true
+          # Manual top-up window if still below target
+          BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
+          if ! awk -v bal="$BAL" -v tgt="$TARGET_SOL" 'BEGIN { exit (bal>=tgt) ? 0 : 1 }'; then
+            echo "::notice::Devnet payer address: $PAYER"
+            echo "::notice::RPC: ${SOLANA_RPC_URL}"
+            echo "::warning::Balance ${BAL:-0} SOL < target ${TARGET_SOL} SOL; sleeping 300s for manual top-up..."
+            sleep 300
+          fi
+          echo "[info] Deployer balance after optional wait:"
+          solana balance || true
           echo "[info] Attempting deploy to declared/programs/output program id"
           set +e
           DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
@@ -309,17 +319,25 @@ jobs:
             for i in $(seq 1 "${MAX_AIRDROP_ATTEMPTS:-6}"); do
               BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
               if awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
-                break
-              fi
-              echo "[info] Airdrop attempt (redeploy) $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
-              solana airdrop 2 "$PAYER" || true
-              sleep $(( 2 * i ))
-            done
-            # Redeploy with new id (will exit on failure due to set -e)
-            solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
-          elif [ $DEPLOY_CODE -ne 0 ]; then
-            echo "::error::Program deploy failed with unexpected error"; exit $DEPLOY_CODE
-          fi
+                 break
+               fi
+               echo "[info] Airdrop attempt (redeploy) $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
+               solana airdrop 2 "$PAYER" || true
+               sleep $(( 2 * i ))
+             done
+             # Manual top-up window before redeploy if still below target
+             BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
+             if ! awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal>=tgt) ? 0 : 1 }'; then
+               echo "::notice::Devnet payer address: $PAYER"
+               echo "::notice::RPC: ${SOLANA_RPC_URL}"
+               echo "::warning::Balance ${BAL:-0} SOL < target ${TARGET_SOL} SOL; sleeping 300s for manual top-up before redeploy..."
+               sleep 300
+             fi
+             # Redeploy with new id (will exit on failure due to set -e)
+             solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
+           elif [ $DEPLOY_CODE -ne 0 ]; then
+             echo "::error::Program deploy failed with unexpected error"; exit $DEPLOY_CODE
+           fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
