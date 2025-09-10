@@ -366,4 +366,7 @@ jobs:
           export SERVICE_FEE_BPS="${SERVICE_FEE_BPS:-100}"
           export MIN_CU_PRICE_MICROLAMPORTS="${MIN_CU_PRICE_MICROLAMPORTS:-20000}"
           export MIN_CU_LIMIT="${MIN_CU_LIMIT:-300000}"
+          # Ensure DEPLOYER_KEYPAIR uses expanded HOME path (env block does not expand $HOME)
+          export DEPLOYER_KEYPAIR="$HOME/.config/solana/id.json"
+          test -f "$DEPLOYER_KEYPAIR" || { echo "::error::Deployer keypair not found at $DEPLOYER_KEYPAIR"; ls -la "$HOME/.config/solana" || true; exit 3; }
           node scripts/init_config.js
