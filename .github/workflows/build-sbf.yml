@@ -255,6 +255,7 @@ jobs:
                 BUILDER="cargo-build-sbf"
               fi
               pushd programs/basalt_inscription
+              rm -f Cargo.lock || true
               "$BUILDER" -v
               popd
               # Export rebuilt .so path for later step to prefer
@@ -359,6 +360,7 @@ jobs:
                BUILDER="cargo-build-sbf"
              fi
              pushd programs/basalt_inscription
+             rm -f Cargo.lock || true
              "$BUILDER" -v
              popd
              if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
