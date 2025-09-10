@@ -273,12 +273,29 @@ jobs:
             echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
           fi
           # Ensure Devnet RPC and fund deployer (best-effort) before deploy
-          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
-          PAYER=$(solana address)
-          echo "[info] Funding deployer $PAYER on Devnet (best-effort)"
-          solana airdrop 5 "$PAYER" || solana airdrop 2 "$PAYER" || true
-          sleep 3
-          solana balance || true
+-          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
+-          PAYER=$(solana address)
+-          echo "[info] Funding deployer $PAYER on Devnet (best-effort)"
+-          solana airdrop 5 "$PAYER" || solana airdrop 2 "$PAYER" || true
+-          sleep 3
+-          solana balance || true
++          # Ensure Devnet RPC and fund deployer to target balance (retry/backoff)
++          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
++          PAYER=$(solana address)
++          TARGET_SOL="${TARGET_SOL:-6}"
++          MAX_AIRDROP_ATTEMPTS="${MAX_AIRDROP_ATTEMPTS:-6}"
++          echo "[info] Ensuring deployer $PAYER has at least ${TARGET_SOL} SOL on Devnet"
++          for i in $(seq 1 "$MAX_AIRDROP_ATTEMPTS"); do
++            BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
++            if awk -v bal="$BAL" -v tgt="$TARGET_SOL" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
++              break
++            fi
++            echo "[info] Airdrop attempt $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
++            solana airdrop 2 "$PAYER" || true
++            sleep $(( 2 * i ))
++          done
++          echo "[info] Deployer balance:"
++          solana balance || true
           echo "[info] Attempting deploy to declared/programs/output program id"
           set +e
           DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
@@ -294,6 +311,16 @@ jobs:
             echo "::warning::Using NEW PROGRAM_ID: $NEW_PID (declare_id in source may differ; proceeding in no-secrets mode)"
             # Update env for later steps
             echo "PROGRAM_ID=$NEW_PID" >> "$GITHUB_ENV"
++            # Top up again before redeploy in case buffer rent was deducted
++            for i in $(seq 1 "${MAX_AIRDROP_ATTEMPTS:-6}"); do
++              BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
++              if awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
++                break
++              fi
++              echo "[info] Airdrop attempt (redeploy) $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
++              solana airdrop 2 "$PAYER" || true
++              sleep $(( 2 * i ))
++            done
             # Redeploy with new id (will exit on failure due to set -e)
             solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
           elif [ $DEPLOY_CODE -ne 0 ]; then
@@ -329,157 +356,31 @@ jobs:
           export MIN_CU_LIMIT="${MIN_CU_LIMIT:-300000}"
           node scripts/init_config.js
 
-  deploy_on_push:
-    name: Deploy to Devnet on push (auto)
-    if: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') }}
-    needs: build
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Check required secrets
-        shell: bash
-        run: |
-          set -euxo pipefail
-          echo "[info] No-secrets mode: using ephemeral payer and artifact program keypair; defaults to Devnet RPC"
-          echo "[info] Optional: set SOLANA_PAYER_KEYPAIR_JSON / SOLANA_PROGRAM_KEYPAIR_JSON / SOLANA_RPC_URL / SERVICE_FEE_* as repo secrets to override"
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
-        with:
-          name: basalt_sbf_artifacts
-          path: artifacts
-
-      - name: Install Solana toolchain v1.17.28
-        env:
-          SOLANA_VERSION: v1.17.28
-        shell: bash
-        run: |
-          set -euxo pipefail
-          INSTALL_BASE="$HOME/.local/share/solana/install"
-          ACTIVE_BIN="$INSTALL_BASE/active_release/bin"
-          if ! command -v solana >/dev/null 2>&1; then
-            # Try official installer with retries
-            for i in 1 2 3; do
-              if curl -fsSL --retry 6 --retry-all-errors --connect-timeout 20 "https://release.solana.com/${SOLANA_VERSION}/install" | sh -s -; then
-                break
-              fi
-              echo "installer attempt $i failed, retrying in 5s..." >&2
-              sleep 5
-            done
-            # Fallback to GitHub Releases tarball if installer didn't provision active_release
-            if [ ! -x "${ACTIVE_BIN}/solana" ]; then
-              mkdir -p "${INSTALL_BASE}"
-              cd "${INSTALL_BASE}"
-              TARBALL="solana-release-x86_64-unknown-linux-gnu.tar.bz2"
-              URL_GH="https://github.com/solana-labs/solana/releases/download/${SOLANA_VERSION}/${TARBALL}"
-              URL_ALT="https://release.solana.com/${SOLANA_VERSION}/${TARBALL}"
-              curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_GH}" || \
-              curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_ALT}"
-              tar -xjf "${TARBALL}"
-              BIN_DIR="$(dirname "$(find . -type f -name solana | head -n1)")"
-              [ -n "${BIN_DIR}" ] || { echo "::error::Failed to locate solana binary after extracting tarball"; exit 1; }
-              rm -rf "${ACTIVE_BIN%/bin}"
-              mkdir -p "$(dirname "${ACTIVE_BIN%/bin}")"
-              ln -s "$(realpath "${BIN_DIR%/bin}")" "${ACTIVE_BIN%/bin}"
-            fi
-            echo "${ACTIVE_BIN}" >> "$GITHUB_PATH"
-          fi
-          # Sanity checks (absolute path and PATH)
-          "${ACTIVE_BIN}/solana" --version
-          solana --version || true
-          ls -la "${ACTIVE_BIN}"
-
-      - name: Configure Solana and write keypairs
-        shell: bash
-        env:
-          PAYER_KEY: ${{ secrets.SOLANA_PAYER_KEYPAIR_JSON || secrets.SOLANA_KEYPAIR_JSON }}
-          PROGRAM_KEY: ${{ secrets.SOLANA_PROGRAM_KEYPAIR_JSON || secrets.SOLANA_KEYPAIR_JSON }}
-          RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
-        run: |
-          set -euxo pipefail
-          mkdir -p "$HOME/.config/solana"
-          # Generate ephemeral payer (no secrets)
-          solana-keygen new --no-bip39-passphrase --silent -o "$HOME/.config/solana/id.json" -f
-          chmod 600 "$HOME/.config/solana/id.json"
-
-          # Use provided RPC if any, otherwise default to Devnet
-          solana config set --url "${RPC_URL:-https://api.devnet.solana.com}"
-          solana config get
-          echo "Payer pubkey: $(solana address)"
-
-          # Devnet airdrop for the ephemeral payer
-          for i in 1 2 3; do
-            solana airdrop 2 && break || { echo "airdrop attempt $i failed"; sleep 5; }
-          done
-          solana balance || true
-
-          # Program keypair from build artifacts (with fallback to repo)
-          PROG_KEY_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription-keypair.json 2>/dev/null | head -n1 || true)"
-          if [ -n "$PROG_KEY_CANDIDATE" ] && [ -f "$PROG_KEY_CANDIDATE" ]; then
-            PROG_KEY="$PROG_KEY_CANDIDATE"
-            echo "[info] Using program keypair from artifacts: $PROG_KEY"
-          elif [ -f programs/output/basalt_inscription-keypair.json ]; then
-            PROG_KEY="programs/output/basalt_inscription-keypair.json"
-            echo "[info] Using program keypair from repo: $PROG_KEY"
-          else
-            echo "::error::Program keypair not found in artifacts or repo (programs/output)"; exit 2
-          fi
-          mkdir -p programs/output
-          if [ "$PROG_KEY" != "programs/output/basalt_inscription-keypair.json" ]; then
-            cp -f "$PROG_KEY" programs/output/basalt_inscription-keypair.json
-          fi
-          chmod 600 programs/output/basalt_inscription-keypair.json
-          echo "Program pubkey: $(solana address -k programs/output/basalt_inscription-keypair.json)"
-
-      - name: Verify declare_id matches program pubkey
-        shell: bash
-        run: |
-          set -euxo pipefail
-          echo "[info] Skipping strict declare_id check; printing for reference only"
-          # tolerant extraction; don't fail if not found
-          DECLARED="$( (grep -RhoE 'declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)' programs/basalt_inscription/src/lib.rs | head -n1 | sed -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/\1/') || true )"
-          if [ -z "${DECLARED:-}" ]; then
-            echo "::warning::declare_id! not found in programs/basalt_inscription/src/lib.rs — skipping comparison"
-          else
-            ACTUAL=$(solana address -k programs/output/basalt_inscription-keypair.json)
-            echo "Declared: $DECLARED"
-            echo "Actual:   $ACTUAL"
-            if [ "$DECLARED" != "$ACTUAL" ]; then
-              echo "::warning::declare_id ($DECLARED) != program keypair pubkey ($ACTUAL) — proceeding in no-secrets mode"
-            fi
-          fi
-
-      - name: Export PROGRAM_ID for later steps
-        shell: bash
-        run: |
-          set -euxo pipefail
-          PID=$(solana address -k programs/output/basalt_inscription-keypair.json)
-          echo "PROGRAM_ID=$PID" >> "$GITHUB_ENV"
-          echo "PROGRAM_ID: $PID"
-
-      - name: Deploy program to Devnet
-        shell: bash
-        run: |
-          set -euxo pipefail
-          SO_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription.so 2>/dev/null | head -n1 || true)"
-          if [ -n "$SO_CANDIDATE" ] && [ -f "$SO_CANDIDATE" ]; then
-            SO="$SO_CANDIDATE"
-            echo "[info] Using program .so from artifacts: $SO"
-          elif [ -f programs/output/basalt_inscription.so ]; then
-            SO="programs/output/basalt_inscription.so"
-            echo "[info] Using program .so from repo: $SO"
-          else
-            echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
-          fi
-          # Ensure Devnet RPC and fund deployer (best-effort) before deploy
-          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
-          PAYER=$(solana address)
-          echo "[info] Funding deployer $PAYER on Devnet (best-effort)"
-          solana airdrop 5 "$PAYER" || solana airdrop 2 "$PAYER" || true
-          sleep 3
-          solana balance || true
+      # Second occurrence in on-push deploy job
+-          # Ensure Devnet RPC and fund deployer (best-effort) before deploy
+-          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
+-          PAYER=$(solana address)
+-          echo "[info] Funding deployer $PAYER on Devnet (best-effort)"
+-          solana airdrop 5 "$PAYER" || solana airdrop 2 "$PAYER" || true
+-          sleep 3
+-          solana balance || true
++          # Ensure Devnet RPC and fund deployer to target balance (retry/backoff)
++          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
++          PAYER=$(solana address)
++          TARGET_SOL="${TARGET_SOL:-6}"
++          MAX_AIRDROP_ATTEMPTS="${MAX_AIRDROP_ATTEMPTS:-6}"
++          echo "[info] Ensuring deployer $PAYER has at least ${TARGET_SOL} SOL on Devnet"
++          for i in $(seq 1 "$MAX_AIRDROP_ATTEMPTS"); do
++            BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
++            if awk -v bal="$BAL" -v tgt="$TARGET_SOL" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
++              break
++            fi
++            echo "[info] Airdrop attempt $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
++            solana airdrop 2 "$PAYER" || true
++            sleep $(( 2 * i ))
++          done
++          echo "[info] Deployer balance:"
++          solana balance || true
           echo "[info] Attempting deploy to declared/programs/output program id"
           set +e
           DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
@@ -495,37 +396,18 @@ jobs:
             echo "::warning::Using NEW PROGRAM_ID: $NEW_PID (declare_id in source may differ; proceeding in no-secrets mode)"
             # Update env for later steps
             echo "PROGRAM_ID=$NEW_PID" >> "$GITHUB_ENV"
++            # Top up again before redeploy in case buffer rent was deducted
++            for i in $(seq 1 "${MAX_AIRDROP_ATTEMPTS:-6}"); do
++              BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
++              if awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
++                break
++              fi
++              echo "[info] Airdrop attempt (redeploy) $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
++              solana airdrop 2 "$PAYER" || true
++              sleep $(( 2 * i ))
++            done
             # Redeploy with new id (will exit on failure due to set -e)
             solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
           elif [ $DEPLOY_CODE -ne 0 ]; then
             echo "::error::Program deploy failed with unexpected error"; exit $DEPLOY_CODE
           fi
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Install server deps
-        working-directory: server
-        run: npm ci --prefer-offline --no-audit
-
-      - name: Initialize on-chain config (Config PDA)
-        working-directory: server
-        env:
-          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
-          PROGRAM_ID: ${{ env.PROGRAM_ID }}
-          SERVICE_FEE_WALLET: ${{ secrets.SERVICE_FEE_WALLET }}
-          SERVICE_FEE_BPS: ${{ secrets.SERVICE_FEE_BPS }}
-          MIN_CU_PRICE_MICROLAMPORTS: ${{ secrets.MIN_CU_PRICE_MICROLAMPORTS }}
-          MIN_CU_LIMIT: ${{ secrets.MIN_CU_LIMIT }}
-          DEPLOYER_KEYPAIR: $HOME/.config/solana/id.json
-        run: |
-          set -euxo pipefail
-          # Fallbacks for private repo without secrets
-          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
-          export SERVICE_FEE_WALLET="${SERVICE_FEE_WALLET:-$(solana address)}"
-          export SERVICE_FEE_BPS="${SERVICE_FEE_BPS:-100}"
-          export MIN_CU_PRICE_MICROLAMPORTS="${MIN_CU_PRICE_MICROLAMPORTS:-20000}"
-          export MIN_CU_LIMIT="${MIN_CU_LIMIT:-300000}"
-          node scripts/init_config.js
