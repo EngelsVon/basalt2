@@ -272,30 +272,23 @@ jobs:
           else
             echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
           fi
-          # Ensure Devnet RPC and fund deployer (best-effort) before deploy
--          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
--          PAYER=$(solana address)
--          echo "[info] Funding deployer $PAYER on Devnet (best-effort)"
--          solana airdrop 5 "$PAYER" || solana airdrop 2 "$PAYER" || true
--          sleep 3
--          solana balance || true
-+          # Ensure Devnet RPC and fund deployer to target balance (retry/backoff)
-+          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
-+          PAYER=$(solana address)
-+          TARGET_SOL="${TARGET_SOL:-6}"
-+          MAX_AIRDROP_ATTEMPTS="${MAX_AIRDROP_ATTEMPTS:-6}"
-+          echo "[info] Ensuring deployer $PAYER has at least ${TARGET_SOL} SOL on Devnet"
-+          for i in $(seq 1 "$MAX_AIRDROP_ATTEMPTS"); do
-+            BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
-+            if awk -v bal="$BAL" -v tgt="$TARGET_SOL" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
-+              break
-+            fi
-+            echo "[info] Airdrop attempt $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
-+            solana airdrop 2 "$PAYER" || true
-+            sleep $(( 2 * i ))
-+          done
-+          echo "[info] Deployer balance:"
-+          solana balance || true
+          # Ensure Devnet RPC and fund deployer to target balance (retry/backoff)
+          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
+          PAYER=$(solana address)
+          TARGET_SOL="${TARGET_SOL:-6}"
+          MAX_AIRDROP_ATTEMPTS="${MAX_AIRDROP_ATTEMPTS:-6}"
+          echo "[info] Ensuring deployer $PAYER has at least ${TARGET_SOL} SOL on Devnet"
+          for i in $(seq 1 "$MAX_AIRDROP_ATTEMPTS"); do
+            BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
+            if awk -v bal="$BAL" -v tgt="$TARGET_SOL" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
+              break
+            fi
+            echo "[info] Airdrop attempt $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
+            solana airdrop 2 "$PAYER" || true
+            sleep $(( 2 * i ))
+          done
+          echo "[info] Deployer balance:"
+          solana balance || true
           echo "[info] Attempting deploy to declared/programs/output program id"
           set +e
           DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
@@ -311,16 +304,16 @@ jobs:
             echo "::warning::Using NEW PROGRAM_ID: $NEW_PID (declare_id in source may differ; proceeding in no-secrets mode)"
             # Update env for later steps
             echo "PROGRAM_ID=$NEW_PID" >> "$GITHUB_ENV"
-+            # Top up again before redeploy in case buffer rent was deducted
-+            for i in $(seq 1 "${MAX_AIRDROP_ATTEMPTS:-6}"); do
-+              BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
-+              if awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
-+                break
-+              fi
-+              echo "[info] Airdrop attempt (redeploy) $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
-+              solana airdrop 2 "$PAYER" || true
-+              sleep $(( 2 * i ))
-+            done
+            # Top up again before redeploy in case buffer rent was deducted
+            for i in $(seq 1 "${MAX_AIRDROP_ATTEMPTS:-6}"); do
+              BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
+              if awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
+                break
+              fi
+              echo "[info] Airdrop attempt (redeploy) $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
+              solana airdrop 2 "$PAYER" || true
+              sleep $(( 2 * i ))
+            done
             # Redeploy with new id (will exit on failure due to set -e)
             solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
           elif [ $DEPLOY_CODE -ne 0 ]; then
@@ -357,30 +350,23 @@ jobs:
           node scripts/init_config.js
 
       # Second occurrence in on-push deploy job
--          # Ensure Devnet RPC and fund deployer (best-effort) before deploy
--          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
--          PAYER=$(solana address)
--          echo "[info] Funding deployer $PAYER on Devnet (best-effort)"
--          solana airdrop 5 "$PAYER" || solana airdrop 2 "$PAYER" || true
--          sleep 3
--          solana balance || true
-+          # Ensure Devnet RPC and fund deployer to target balance (retry/backoff)
-+          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
-+          PAYER=$(solana address)
-+          TARGET_SOL="${TARGET_SOL:-6}"
-+          MAX_AIRDROP_ATTEMPTS="${MAX_AIRDROP_ATTEMPTS:-6}"
-+          echo "[info] Ensuring deployer $PAYER has at least ${TARGET_SOL} SOL on Devnet"
-+          for i in $(seq 1 "$MAX_AIRDROP_ATTEMPTS"); do
-+            BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
-+            if awk -v bal="$BAL" -v tgt="$TARGET_SOL" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
-+              break
-+            fi
-+            echo "[info] Airdrop attempt $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
-+            solana airdrop 2 "$PAYER" || true
-+            sleep $(( 2 * i ))
-+          done
-+          echo "[info] Deployer balance:"
-+          solana balance || true
+          # Ensure Devnet RPC and fund deployer to target balance (retry/backoff)
+          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
+          PAYER=$(solana address)
+          TARGET_SOL="${TARGET_SOL:-6}"
+          MAX_AIRDROP_ATTEMPTS="${MAX_AIRDROP_ATTEMPTS:-6}"
+          echo "[info] Ensuring deployer $PAYER has at least ${TARGET_SOL} SOL on Devnet"
+          for i in $(seq 1 "$MAX_AIRDROP_ATTEMPTS"); do
+            BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
+            if awk -v bal="$BAL" -v tgt="$TARGET_SOL" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
+              break
+            fi
+            echo "[info] Airdrop attempt $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
+            solana airdrop 2 "$PAYER" || true
+            sleep $(( 2 * i ))
+          done
+          echo "[info] Deployer balance:"
+          solana balance || true
           echo "[info] Attempting deploy to declared/programs/output program id"
           set +e
           DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
@@ -396,16 +382,16 @@ jobs:
             echo "::warning::Using NEW PROGRAM_ID: $NEW_PID (declare_id in source may differ; proceeding in no-secrets mode)"
             # Update env for later steps
             echo "PROGRAM_ID=$NEW_PID" >> "$GITHUB_ENV"
-+            # Top up again before redeploy in case buffer rent was deducted
-+            for i in $(seq 1 "${MAX_AIRDROP_ATTEMPTS:-6}"); do
-+              BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
-+              if awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
-+                break
-+              fi
-+              echo "[info] Airdrop attempt (redeploy) $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
-+              solana airdrop 2 "$PAYER" || true
-+              sleep $(( 2 * i ))
-+            done
+            # Top up again before redeploy in case buffer rent was deducted
+            for i in $(seq 1 "${MAX_AIRDROP_ATTEMPTS:-6}"); do
+              BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
+              if awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
+                break
+              fi
+              echo "[info] Airdrop attempt (redeploy) $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
+              solana airdrop 2 "$PAYER" || true
+              sleep $(( 2 * i ))
+            done
             # Redeploy with new id (will exit on failure due to set -e)
             solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
           elif [ $DEPLOY_CODE -ne 0 ]; then
