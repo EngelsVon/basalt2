@@ -237,17 +237,27 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          echo "[info] Skipping strict declare_id check; printing for reference only"
-          # tolerant extraction; don't fail if not found
+          echo "[info] Ensuring declare_id matches program keypair; auto-fix if needed"
+          ACTUAL=$(solana address -k programs/output/basalt_inscription-keypair.json)
           DECLARED="$( (grep -RhoE 'declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)' programs/basalt_inscription/src/lib.rs | head -n1 | sed -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/\1/') || true )"
           if [ -z "${DECLARED:-}" ]; then
-            echo "::warning::declare_id! not found in programs/basalt_inscription/src/lib.rs — skipping comparison"
+            echo "::warning::declare_id! not found in programs/basalt_inscription/src/lib.rs — skipping auto-fix"
           else
-            ACTUAL=$(solana address -k programs/output/basalt_inscription-keypair.json)
             echo "Declared: $DECLARED"
             echo "Actual:   $ACTUAL"
             if [ "$DECLARED" != "$ACTUAL" ]; then
-              echo "::warning::declare_id ($DECLARED) != program keypair pubkey ($ACTUAL) — proceeding in no-secrets mode"
+              echo "::warning::declare_id != keypair pubkey; rewriting to $ACTUAL and rebuilding"
+              sed -i -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/declare_id!("'"$ACTUAL"'")/' programs/basalt_inscription/src/lib.rs
+              # Rebuild SBF to embed the new declare_id
+              if ! command -v cargo-build-sbf >/dev/null 2>&1; then
+                "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v -p programs/basalt_inscription
+              else
+                cargo-build-sbf -v -p programs/basalt_inscription || cargo-build-sbf -v
+              fi
+              # Export rebuilt .so path for later step to prefer
+              if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
+                echo "SO_REBUILT=programs/basalt_inscription/target/deploy/basalt_inscription.so" >> "$GITHUB_ENV"
+              fi
             fi
           fi
 
@@ -263,15 +273,21 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          SO_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription.so 2>/dev/null | head -n1 || true)"
-          if [ -n "$SO_CANDIDATE" ] && [ -f "$SO_CANDIDATE" ]; then
-            SO="$SO_CANDIDATE"
-            echo "[info] Using program .so from artifacts: $SO"
-          elif [ -f programs/output/basalt_inscription.so ]; then
-            SO="programs/output/basalt_inscription.so"
-            echo "[info] Using program .so from repo: $SO"
+          # Prefer freshly rebuilt .so if available (ensures declare_id is aligned)
+          if [ -n "${SO_REBUILT:-}" ] && [ -f "$SO_REBUILT" ]; then
+            SO="$SO_REBUILT"
+            echo "[info] Using rebuilt program .so: $SO"
           else
-            echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
+            SO_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription.so 2>/dev/null | head -n1 || true)"
+            if [ -n "$SO_CANDIDATE" ] && [ -f "$SO_CANDIDATE" ]; then
+              SO="$SO_CANDIDATE"
+              echo "[info] Using program .so from artifacts: $SO"
+            elif [ -f programs/output/basalt_inscription.so ]; then
+              SO="programs/output/basalt_inscription.so"
+              echo "[info] Using program .so from repo: $SO"
+            else
+              echo "::error::Program .so not found in rebuilt target, artifacts, or repo (programs/output)"; exit 2
+            fi
           fi
           # Ensure Devnet RPC and fund deployer to target balance (retry/backoff)
           export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
@@ -308,13 +324,13 @@ jobs:
           echo "$DEPLOY_OUT"
           if [ $DEPLOY_CODE -ne 0 ] && echo "$DEPLOY_OUT" | grep -q "does not match authority provided"; then
             echo "::warning::Existing program at this address has a different upgrade authority. Falling back to a fresh program id."
-            # Generate a fresh program id and redeploy
+            # Generate a fresh program id and ensure declare_id matches, then rebuild
             solana-keygen new --no-bip39-passphrase --silent -o programs/output/basalt_inscription-keypair.json -f
             chmod 600 programs/output/basalt_inscription-keypair.json
             NEW_PID=$(solana address -k programs/output/basalt_inscription-keypair.json)
-            echo "::warning::Using NEW PROGRAM_ID: $NEW_PID (declare_id in source may differ; proceeding in no-secrets mode)"
-            # Update env for later steps
-            echo "PROGRAM_ID=$NEW_PID" >> "$GITHUB_ENV"
+            echo "::warning::Using NEW PROGRAM_ID: $NEW_PID; rewriting declare_id and rebuilding"
+            # Rewrite declare_id in source to NEW_PID
+            sed -i -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/declare_id!("'"$NEW_PID"'")/' programs/basalt_inscription/src/lib.rs
             # Top up again before redeploy in case buffer rent was deducted
             for i in $(seq 1 "${MAX_AIRDROP_ATTEMPTS:-6}"); do
               BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
@@ -333,6 +349,17 @@ jobs:
                echo "::warning::Balance ${BAL:-0} SOL < target ${TARGET_SOL} SOL; sleeping 300s for manual top-up before redeploy..."
                sleep 300
              fi
+             # Rebuild with new declare_id to ensure runtime matches
+             if ! command -v cargo-build-sbf >/dev/null 2>&1; then
+               "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v -p programs/basalt_inscription
+             else
+               cargo-build-sbf -v -p programs/basalt_inscription || cargo-build-sbf -v
+             fi
+             if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
+               SO="programs/basalt_inscription/target/deploy/basalt_inscription.so"
+             fi
+             # Update env for later steps
+             echo "PROGRAM_ID=$NEW_PID" >> "$GITHUB_ENV"
              # Redeploy with new id (will exit on failure due to set -e)
              solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
            elif [ $DEPLOY_CODE -ne 0 ]; then
