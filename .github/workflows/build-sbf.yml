@@ -272,6 +272,13 @@ jobs:
           else
             echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
           fi
+          # Ensure Devnet RPC and fund deployer (best-effort) before deploy
+          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
+          PAYER=$(solana address)
+          echo "[info] Funding deployer $PAYER on Devnet (best-effort)"
+          solana airdrop 5 "$PAYER" || solana airdrop 2 "$PAYER" || true
+          sleep 3
+          solana balance || true
           echo "[info] Attempting deploy to declared/programs/output program id"
           set +e
           DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
@@ -466,6 +473,13 @@ jobs:
           else
             echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
           fi
+          # Ensure Devnet RPC and fund deployer (best-effort) before deploy
+          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
+          PAYER=$(solana address)
+          echo "[info] Funding deployer $PAYER on Devnet (best-effort)"
+          solana airdrop 5 "$PAYER" || solana airdrop 2 "$PAYER" || true
+          sleep 3
+          solana balance || true
           echo "[info] Attempting deploy to declared/programs/output program id"
           set +e
           DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
