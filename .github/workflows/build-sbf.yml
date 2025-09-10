@@ -248,12 +248,15 @@ jobs:
             if [ "$DECLARED" != "$ACTUAL" ]; then
               echo "::warning::declare_id != keypair pubkey; rewriting to $ACTUAL and rebuilding"
               sed -i -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/declare_id!("'"$ACTUAL"'")/' programs/basalt_inscription/src/lib.rs
-              # Rebuild SBF to embed the new declare_id
+              # Rebuild SBF to embed the new declare_id (run inside the program directory)
               if ! command -v cargo-build-sbf >/dev/null 2>&1; then
-                "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v -p programs/basalt_inscription
+                BUILDER="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
               else
-                cargo-build-sbf -v -p programs/basalt_inscription || cargo-build-sbf -v
+                BUILDER="cargo-build-sbf"
               fi
+              pushd programs/basalt_inscription
+              "$BUILDER" -v
+              popd
               # Export rebuilt .so path for later step to prefer
               if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
                 echo "SO_REBUILT=programs/basalt_inscription/target/deploy/basalt_inscription.so" >> "$GITHUB_ENV"
@@ -349,12 +352,15 @@ jobs:
                echo "::warning::Balance ${BAL:-0} SOL < target ${TARGET_SOL} SOL; sleeping 300s for manual top-up before redeploy..."
                sleep 300
              fi
-             # Rebuild with new declare_id to ensure runtime matches
+             # Rebuild with new declare_id to ensure runtime matches (run inside program dir)
              if ! command -v cargo-build-sbf >/dev/null 2>&1; then
-               "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v -p programs/basalt_inscription
+               BUILDER="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
              else
-               cargo-build-sbf -v -p programs/basalt_inscription || cargo-build-sbf -v
+               BUILDER="cargo-build-sbf"
              fi
+             pushd programs/basalt_inscription
+             "$BUILDER" -v
+             popd
              if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
                SO="programs/basalt_inscription/target/deploy/basalt_inscription.so"
              fi
