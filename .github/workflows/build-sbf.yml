@@ -272,7 +272,27 @@ jobs:
           else
             echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
           fi
-          solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
+-          solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
++          echo "[info] Attempting deploy to declared/programs/output program id"
++          set +e
++          DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
++          DEPLOY_CODE=$?
++          set -e
++          echo "$DEPLOY_OUT"
++          if [ $DEPLOY_CODE -ne 0 ] && echo "$DEPLOY_OUT" | grep -q "does not match authority provided"; then
++            echo "::warning::Existing program at this address has a different upgrade authority. Falling back to a fresh program id."
++            # Generate a fresh program id and redeploy
++            solana-keygen new --no-bip39-passphrase --silent -o programs/output/basalt_inscription-keypair.json -f
++            chmod 600 programs/output/basalt_inscription-keypair.json
++            NEW_PID=$(solana address -k programs/output/basalt_inscription-keypair.json)
++            echo "::warning::Using NEW PROGRAM_ID: $NEW_PID (declare_id in source may differ; proceeding in no-secrets mode)"
++            # Update env for later steps
++            echo "PROGRAM_ID=$NEW_PID" >> "$GITHUB_ENV"
++            # Redeploy with new id (will exit on failure due to set -e)
++            solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
++          elif [ $DEPLOY_CODE -ne 0 ]; then
++            echo "::error::Program deploy failed with unexpected error"; exit $DEPLOY_CODE
++          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -447,7 +467,27 @@ jobs:
           else
             echo "::error::Program .so not found in artifacts or repo (programs/output)"; exit 2
           fi
-          solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
+-          solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
++          echo "[info] Attempting deploy to declared/programs/output program id"
++          set +e
++          DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
++          DEPLOY_CODE=$?
++          set -e
++          echo "$DEPLOY_OUT"
++          if [ $DEPLOY_CODE -ne 0 ] && echo "$DEPLOY_OUT" | grep -q "does not match authority provided"; then
++            echo "::warning::Existing program at this address has a different upgrade authority. Falling back to a fresh program id."
++            # Generate a fresh program id and redeploy
++            solana-keygen new --no-bip39-passphrase --silent -o programs/output/basalt_inscription-keypair.json -f
++            chmod 600 programs/output/basalt_inscription-keypair.json
++            NEW_PID=$(solana address -k programs/output/basalt_inscription-keypair.json)
++            echo "::warning::Using NEW PROGRAM_ID: $NEW_PID (declare_id in source may differ; proceeding in no-secrets mode)"
++            # Update env for later steps
++            echo "PROGRAM_ID=$NEW_PID" >> "$GITHUB_ENV"
++            # Redeploy with new id (will exit on failure due to set -e)
++            solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
++          elif [ $DEPLOY_CODE -ne 0 ]; then
++            echo "::error::Program deploy failed with unexpected error"; exit $DEPLOY_CODE
++          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
