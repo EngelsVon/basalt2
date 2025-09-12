@@ -404,7 +404,8 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # Update Anchor.toml devnet program id
           PID="${PROGRAM_ID:-$(solana address -k programs/output/basalt_inscription-keypair.json)}"
-          sed -i -E "s#(\[programs.devnet\][^[]*basalt_inscription\s*=\s*")([^"]+)(".*)#\1${PID}\3#" Anchor.toml || true
+          # Use perl for robust multiline, avoiding fragile sed escaping
+          env PID="$PID" perl -0777 -i -pe 's/(\[programs\.devnet\][\s\S]*?basalt_inscription\s*=\s*")[^"]+("\s*)/\1$ENV{PID}\2/s' Anchor.toml || true
           # Optionally update server/.env.example PROGRAM_ID (do not touch .env)
           if [ -f server/.env.example ]; then
             sed -i -E "s/^(PROGRAM_ID=).*/\1${PID}/" server/.env.example || true
