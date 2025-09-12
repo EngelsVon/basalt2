@@ -17,6 +17,9 @@ on:
       - 'Cargo.lock'
       - '.github/workflows/build-sbf.yml'
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -392,6 +395,27 @@ jobs:
            elif [ $DEPLOY_CODE -ne 0 ]; then
              echo "::error::Program deploy failed with unexpected error"; exit $DEPLOY_CODE
            fi
+
+      - name: Persist PROGRAM_ID and keypair back to repo
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Update Anchor.toml devnet program id
+          PID="${PROGRAM_ID:-$(solana address -k programs/output/basalt_inscription-keypair.json)}"
+          sed -i -E "s#(\[programs.devnet\][^[]*basalt_inscription\s*=\s*")([^"]+)(".*)#\1${PID}\3#" Anchor.toml || true
+          # Optionally update server/.env.example PROGRAM_ID (do not touch .env)
+          if [ -f server/.env.example ]; then
+            sed -i -E "s/^(PROGRAM_ID=).*/\1${PID}/" server/.env.example || true
+          fi
+          git add programs/output/basalt_inscription-keypair.json Anchor.toml server/.env.example || true
+          if ! git diff --cached --quiet; then
+            git commit -m "ci: persist PROGRAM_ID ${PID} and program keypair; align Anchor.toml"
+            git push
+          else
+            echo "[info] Nothing to commit"
+          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
