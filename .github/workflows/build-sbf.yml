@@ -91,14 +91,14 @@ jobs:
           set -euxo pipefail
           SOL_CARGO="$HOME/.local/share/solana/install/active_release/bin/cargo"
           USE_CARGO=""
-          if [ -x "$SOL_CARGO" ]; then
+          if [ -x "$HOME/.cargo/bin/cargo" ]; then
+            USE_CARGO="$HOME/.cargo/bin/cargo"
+          elif [ -x "$SOL_CARGO" ]; then
             USE_CARGO="$SOL_CARGO"
           elif command -v cargo >/dev/null 2>&1; then
             USE_CARGO="$(command -v cargo)"
-          elif [ -x "$HOME/.cargo/bin/cargo" ]; then
-            USE_CARGO="$HOME/.cargo/bin/cargo"
           fi
-
+      
           if [ -n "$USE_CARGO" ]; then
             # Ensure we don't keep a v4 lockfile produced by newer cargo
             rm -f Cargo.lock
@@ -115,8 +115,11 @@ jobs:
           set -euxo pipefail
           echo "[info] Pre-build: removing Cargo.lock to avoid v4 format issues"
           rm -f Cargo.lock || true
+          # Pre-generate a compatible lockfile using Cargo 1.70 if available
+          "$HOME/.cargo/bin/cargo" --version || true
+          "$HOME/.cargo/bin/cargo" generate-lockfile || true
           ls -l || true
-
+      
           # Use full path as fallback in case PATH update fails for any reason
           if ! command -v cargo-build-sbf >/dev/null 2>&1; then
             "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v
@@ -190,6 +193,16 @@ jobs:
           "${ACTIVE_BIN}/solana" --version
           solana --version || true
           ls -la "${ACTIVE_BIN}"
+      
+      - name: Install Rust toolchain (Cargo 1.70.0 - pre-v4 lockfile)
+        shell: bash
+        run: |
+          set -euxo pipefail
+          curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 https://sh.rustup.rs | sh -s -- -y
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustup" toolchain install 1.70.0 --profile minimal
+          "$HOME/.cargo/bin/rustup" default 1.70.0
+          "$HOME/.cargo/bin/cargo" --version
 
       - name: Configure Solana and write keypairs
         shell: bash
@@ -256,6 +269,9 @@ jobs:
               fi
               pushd programs/basalt_inscription
               rm -f Cargo.lock || true
+              # Pre-generate a compatible lockfile with Cargo 1.70
+              "$HOME/.cargo/bin/cargo" --version || true
+              "$HOME/.cargo/bin/cargo" generate-lockfile || true
               "$BUILDER" -v
               popd
               # Export rebuilt .so path for later step to prefer
@@ -361,6 +377,9 @@ jobs:
              fi
              pushd programs/basalt_inscription
              rm -f Cargo.lock || true
+             # Pre-generate a compatible lockfile with Cargo 1.70
+             "$HOME/.cargo/bin/cargo" --version || true
+             "$HOME/.cargo/bin/cargo" generate-lockfile || true
              "$BUILDER" -v
              popd
              if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
