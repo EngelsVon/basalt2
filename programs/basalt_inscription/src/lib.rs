@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("4EVY2AhAwYXbm3bAT3onMJ1azzpzR7aURF15GehfJHjN");
+declare_id!("8u97xEZJRKeHQCmhDGUbAc2EbU3wB9QB7wHxhPZQ5foK");
 
 #[program]
 pub mod basalt_inscription {
@@ -19,7 +19,7 @@ pub mod basalt_inscription {
     pub fn update_config(ctx: Context<UpdateConfig>, service_fee_wallet: Option<Pubkey>, service_fee_bps: Option<u16>, min_cu_price: Option<u64>, min_cu_limit: Option<u32>) -> Result<()> {
         require!(ctx.accounts.authority.key() == ctx.accounts.config.authority, ErrorCode::Unauthorized);
         if let Some(w) = service_fee_wallet { ctx.accounts.config.service_fee_wallet = w; }
-        if let Some(bps) = service_fee_bps { ctx.accounts.config.service_fee_bps = bps; }
+        if let Some(b) = service_fee_bps { ctx.accounts.config.service_fee_bps = b; }
         if let Some(p) = min_cu_price { ctx.accounts.config.min_cu_price = p; }
         if let Some(l) = min_cu_limit { ctx.accounts.config.min_cu_limit = l; }
         Ok(())
