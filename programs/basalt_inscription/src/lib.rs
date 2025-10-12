@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 
-declare_id!("8u97xEZJRKeHQCmhDGUbAc2EbU3wB9QB7wHxhPZQ5foK");
+declare_id!("BuuvUksGkGmaPm7eB2CKbM2eTiqS9UCr5nnBGkaUKGJG");
 
 #[program]
 pub mod basalt_inscription {
