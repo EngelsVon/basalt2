@@ -121,6 +121,8 @@ jobs:
           # Pre-generate a compatible lockfile using Cargo 1.85 if available
           "$HOME/.cargo/bin/cargo" --version || true
           "$HOME/.cargo/bin/cargo" generate-lockfile || true
+          # Solana 1.17's embedded Cargo accepts lockfile v3, not Cargo 1.85's v4
+          sed -i -E 's/^version = 4$/version = 3/' Cargo.lock
           ls -l || true
       
           # Use full path as fallback in case PATH update fails for any reason
@@ -275,6 +277,8 @@ jobs:
               # Pre-generate a compatible lockfile with Cargo 1.85
               "$HOME/.cargo/bin/cargo" --version || true
               "$HOME/.cargo/bin/cargo" generate-lockfile || true
+          # Solana 1.17's embedded Cargo accepts lockfile v3, not Cargo 1.85's v4
+          sed -i -E 's/^version = 4$/version = 3/' Cargo.lock
               "$BUILDER" -v
               popd
               # Export rebuilt .so path for later step to prefer
@@ -383,6 +387,8 @@ jobs:
              # Pre-generate a compatible lockfile with Cargo 1.85
              "$HOME/.cargo/bin/cargo" --version || true
              "$HOME/.cargo/bin/cargo" generate-lockfile || true
+          # Solana 1.17's embedded Cargo accepts lockfile v3, not Cargo 1.85's v4
+          sed -i -E 's/^version = 4$/version = 3/' Cargo.lock
              "$BUILDER" -v
              popd
              if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
