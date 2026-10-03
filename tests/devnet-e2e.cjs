@@ -48,7 +48,7 @@ async function json(route, body) {
   const cases = [['general','low'], ['love','medium'], ['agreement','high']];
   for (const [type, priority] of cases) {
     const message = `Basalt full test ${type}/${priority} ${new Date().toISOString()}\n第二行 💎`;
-    const fee = await service.calculateInscriptionFee(message, type, priority);
+    const fee = await service.calculateInscriptionFee(message, type, priority, wallet.publicKey.toBase58(), wallet.publicKey.toBase58());
     const receipt = await service.inscribeMessage(message, wallet.publicKey, async () => { throw new Error('Unexpected fallback'); }, wallet.publicKey.toBase58(), async tx => { tx.partialSign(wallet); return tx; }, type, priority);
     assert.equal(receipt.status, 'confirmed');
     let tx, read;

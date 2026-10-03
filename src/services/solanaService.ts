@@ -1,3 +1,4 @@
+import { buildRecord, readRecord, walletRecords, recoveryCode, type Direction } from './recordService';
 import { Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL, ComputeBudgetProgram, TransactionInstruction } from '@solana/web3.js';
 import { createMemoInstruction } from '@solana/spl-memo';
 import bs58 from 'bs58';
@@ -5,6 +6,10 @@ import { Buffer } from 'buffer';
 
 // 导出接口定义
 export interface InscriptionData {
+  recoveryCode?: string;
+  recordAddress?: string;
+  previousSent?: string;
+  previousReceived?: string;
   message: string;
   sender: string;
   recipient?: string;
@@ -17,6 +22,8 @@ export interface InscriptionData {
 
 // 后端费用响应类型
 export interface FeeResponseData {
+  storageRent?: number;
+  storageRentSOL?: number;
   networkFee: number; // lamports
   serviceFee: number; // lamports
   totalFee: number; // lamports
@@ -33,6 +40,7 @@ interface ApiConfig {
   serviceFeeRate: number; // percent
   priorityPresets: Record<string, { cuLimit: number; cuPriceMicroLamports: number }>;
   defaultPriority: 'low' | 'medium' | 'high';
+  persistentRecords?: boolean;
   programMode: boolean;
   programId?: string | null;
   programConfig?: {
@@ -50,14 +58,14 @@ export class SolanaService {
   private connection: Connection;
   constructor(connection: Connection) { this.connection = connection; }
 
-  private async getApiConfig(): Promise<ApiConfig> {
+  async getApiConfig(): Promise<ApiConfig> {
     return api<ApiConfig>('/api/config');
   }
 
-  async calculateInscriptionFee(message: string, type: InscriptionType = 'general', priority: Priority = 'medium'): Promise<FeeResponseData> {
+  async calculateInscriptionFee(message: string, type: InscriptionType = 'general', priority: Priority = 'medium', sender?: string, recipient?: string): Promise<FeeResponseData> {
     return api<FeeResponseData>('/api/inscription/calculate-fee', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, type, priority }),
+      body: JSON.stringify({ message, type, priority, sender, recipient }),
     });
   }
 
@@ -70,6 +78,7 @@ export class SolanaService {
     const config = await this.getApiConfig();
     if (config.network !== 'devnet') throw new Error('当前应用仅连接 Devnet，请检查后端网络');
     if (config.programMode && (!config.programId || !config.programConfig)) throw new Error('链上配置未就绪');
+    if (config.persistentRecords) return this.inscribePersistent(message, senderPublicKey, sendTransaction, recipient, signTransaction, type, priority, config);
     const fee = await this.calculateInscriptionFee(message, type, priority);
     const preset = config.priorityPresets[priority];
     if (!preset) throw new Error('无效优先费档位');
@@ -131,9 +140,55 @@ export class SolanaService {
     return result;
   }
 
+  private async inscribePersistent(message: string, sender: PublicKey, send: (tx: Transaction, c: Connection) => Promise<string>, recipient: string | undefined, sign: ((tx: Transaction) => Promise<Transaction>) | undefined, type: InscriptionType, priority: Priority, config: ApiConfig): Promise<InscriptionData> {
+    const cfg = config.programConfig!;
+    const preset = config.priorityPresets[priority];
+    const limit = Math.max(preset.cuLimit,cfg.minCuLimit), price = Math.max(preset.cuPriceMicroLamports,cfg.minCuPrice);
+    const built = await buildRecord(this.connection,new PublicKey(config.programId!),sender,new PublicKey(recipient || sender),new PublicKey(cfg.serviceFeeWallet),message,['general','love','agreement'].indexOf(type),limit,price);
+    const network = (await this.connection.getFeeForMessage(built.tx.compileMessage())).value;
+    if (network === null) throw new Error('费用查询失败');
+    const fee = Math.ceil(Math.ceil(limit*price/1_000_000)*cfg.serviceFeeBps/10_000);
+    if (await this.connection.getBalance(sender) < network+fee+built.rent) throw new Error('余额不足，包含链上存储账户的租金储备');
+    let signature: string;
+    if (sign) {
+      const signed = await sign(built.tx);
+      signature = bs58.encode(signed.signature!);
+      try { await this.connection.sendRawTransaction(signed.serialize(),{skipPreflight:false,maxRetries:3}); }
+      catch(error) { throw new Error(`提交结果待核实，先查询签名 ${signature} 或寻回号 ${built.code}，不要重复提交：${String(error)}`); }
+    } else { signature = await send(built.tx,this.connection); }
+    const result: InscriptionData = { message, sender: sender.toBase58(), recipient: recipient || sender.toBase58(), type, timestamp: Date.now(), signature, status: 'pending', recoveryCode: built.code, recordAddress: built.address };
+    for (let i=0;i<30;i++) {
+      const status=(await this.connection.getSignatureStatus(signature,{searchTransactionHistory:true}).catch(()=>null))?.value;
+      if (status?.err) throw new Error(`交易失败 ${signature}: ${JSON.stringify(status.err)}`);
+      if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return {...result,status:'confirmed'};
+      await new Promise(r=>setTimeout(r,1500));
+    }
+    return result;
+  }
+  async recover(code: string): Promise<InscriptionData | null> {
+    if (!code.trim().startsWith('BS1:')) return this.getInscriptionBySignature(code.trim());
+    const config=await this.getApiConfig();
+    if (!config.programId) throw new Error('程序未配置');
+    return readRecord(this.connection,code.trim(),new PublicKey(config.programId));
+  }
+  async getWalletRecords(wallet: string, direction: Direction, before?: string) {
+    const config=await this.getApiConfig();
+    if (!config.persistentRecords || !config.programId) throw new Error('链上目录尚未启用；旧记录请按交易签名查询');
+    return walletRecords(this.connection,new PublicKey(config.programId),new PublicKey(wallet),direction,before);
+  }
+
   async getInscriptionBySignature(signature: string): Promise<InscriptionData | null> {
     const tx = await this.connection.getParsedTransaction(signature, { commitment: 'confirmed', maxSupportedTransactionVersion: 0 });
     if (!tx || !tx.meta || tx.meta.err) return null;
+    const config=await this.getApiConfig();
+    for (const ix of tx.transaction.message.instructions) {
+        if (ix.programId.toBase58() === config.programId && 'accounts' in ix && ix.accounts.length === 10 && 'data' in ix && Buffer.from(bs58.decode(ix.data)).subarray(0,8).equals((await hash('global:inscribe_record')).subarray(0,8))) {
+        const code=recoveryCode(ix.programId,ix.accounts[3]);
+        const record=await readRecord(this.connection,code,ix.programId);
+        return {...record,signature};
+      }
+    }
+
     const sender = tx.transaction.message.accountKeys.find(key => key.signer)?.pubkey.toBase58();
     if (!sender) return null;
     for (const ix of tx.transaction.message.instructions) {
@@ -161,6 +216,7 @@ export class SolanaService {
   }
 
   async searchInscriptions(query: string, addresses: string[] = [], limit = 100): Promise<InscriptionData[]> {
+    if (query.trim().startsWith('BS1:')) { const record=await this.recover(query); return record ? [record] : []; }
     if (/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(query)) {
       const hit = await this.getInscriptionBySignature(query);
       if (hit) return [hit];

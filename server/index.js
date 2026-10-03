@@ -20,6 +20,7 @@ const MIN_SERVICE_FEE_LAMPORTS = 0;
 
 // Program 模式相关环境变量
 const PROGRAM_ID = process.env.PROGRAM_ID || null;
+const PERSISTENT_RECORDS = process.env.PERSISTENT_RECORDS === 'true';
 
 // Solana连接配置 - 使用更稳定的RPC端点
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
@@ -117,7 +118,7 @@ const limiter = rateLimit({
 app.use('/api/', limiter);
 
 // Fixed-upstream RPC relay: browsers use the same Devnet connection as the API.
-const rpcMethods = new Set(['getAccountInfo', 'getBalance', 'getLatestBlockhash', 'getBlockHeight', 'getFeeForMessage', 'getSignatureStatuses', 'getTransaction', 'getSignaturesForAddress', 'sendTransaction', 'simulateTransaction', 'getGenesisHash', 'getVersion']);
+const rpcMethods = new Set(['getAccountInfo', 'getBalance', 'getLatestBlockhash', 'getBlockHeight', 'getFeeForMessage', 'getSignatureStatuses', 'getTransaction', 'getSignaturesForAddress', 'sendTransaction', 'simulateTransaction', 'getGenesisHash', 'getVersion', 'getMultipleAccounts', 'getMinimumBalanceForRentExemption']);
 app.post('/api/rpc', async (req, res) => {
   if (!req.body || req.body.jsonrpc !== '2.0' || !rpcMethods.has(req.body.method)) return res.status(400).json({ error: 'Unsupported RPC method' });
   try {
@@ -156,6 +157,7 @@ app.get('/api/config', async (req, res) => {
         priorityPresets: presets,
         defaultPriority: 'medium',
         programMode,
+        persistentRecords: PERSISTENT_RECORDS,
         programId: PROGRAM_ID,
         programConfig: onchain, // 便于前端取用 serviceFeeWallet/bps 等
       }
@@ -178,10 +180,26 @@ app.get('/api/network/status', async (req, res) => {
 // 计算铭刻费用（包含服务费）
 app.post('/api/inscription/calculate-fee', async (req, res) => {
   try {
-    const { message = '', type = 'general', priority = 'medium' } = req.body || {};
+    const { message = '', type = 'general', priority = 'medium', sender, recipient } = req.body || {};
     if (typeof message !== 'string' || !message.trim() || message.length > 280 || !['general','love','agreement'].includes(type) || !['low','medium','high'].includes(priority)) return res.status(400).json({ success: false, error: 'Invalid inscription input' });
     const onchain = await fetchOnchainConfig();
     if (PROGRAM_ID && !onchain) return res.status(503).json({ success: false, error: 'Program config unavailable' });
+    let storageRent = 0;
+    if (PERSISTENT_RECORDS) {
+      if (Buffer.byteLength(message, 'utf8') > 560) return res.status(400).json({ success: false, error: '链上存储上限为 560 UTF-8 字节' });
+      let payer, receiver;
+      try { payer = new PublicKey(sender || '11111111111111111111111111111111'); receiver = new PublicKey(recipient || payer); }
+      catch { return res.status(400).json({success:false,error:'钱包地址无效'}); }
+      const program = new PublicKey(PROGRAM_ID);
+      const sent = PublicKey.findProgramAddressSync([Buffer.from('sent'),payer.toBuffer()],program)[0];
+      const inbox = PublicKey.findProgramAddressSync([Buffer.from('inbox'),receiver.toBuffer()],program)[0];
+      const [heads, recordRent, entryRent, headRent] = await Promise.all([
+        connection.getMultipleAccountsInfo([sent,inbox]), connection.getMinimumBalanceForRentExemption(726),
+        connection.getMinimumBalanceForRentExemption(40), connection.getMinimumBalanceForRentExemption(80),
+      ]);
+      storageRent = recordRent + 2*entryRent + heads.filter(h => !h).length*headRent;
+    }
+
 
     // 构建模拟交易以估算基础网络费（不含优先费）
     const dummyPayer = new PublicKey('11111111111111111111111111111111');
@@ -231,12 +249,14 @@ app.post('/api/inscription/calculate-fee', async (req, res) => {
     const rawServiceFee = Math.ceil(priorityFeeLamports * (bps / 10000));
     const serviceFee = Math.max(rawServiceFee, MIN_SERVICE_FEE_LAMPORTS);
 
-    const totalFee = networkFee + serviceFee;
+    const totalFee = networkFee + serviceFee + storageRent;
     const totalFeeSOL = totalFee / LAMPORTS_PER_SOL;
 
     res.json({
       success: true,
       data: {
+        storageRent,
+        storageRentSOL: storageRent / LAMPORTS_PER_SOL,
         networkFee,
         serviceFee,
         totalFee,

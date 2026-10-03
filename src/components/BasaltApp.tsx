@@ -1,3 +1,4 @@
+import { RecoveryPanel } from './RecoveryPanel';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
@@ -8,6 +9,7 @@ export const BasaltApp: React.FC = () => {
   const { publicKey, sendTransaction, connected, signTransaction } = useWallet();
   const { connection } = useConnection();
   const [message, setMessage] = useState('');
+  const [lastReceipt, setLastReceipt] = useState<InscriptionData | null>(null);
   const [recipient, setRecipient] = useState('');
   const [inscriptionType, setInscriptionType] = useState<'love' | 'general' | 'agreement'>('general');
   const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
@@ -71,6 +73,7 @@ export const BasaltApp: React.FC = () => {
         priority
       );
       
+      setLastReceipt(inscriptionData);
       // 添加到本地记录
       setInscriptions(prev => [inscriptionData, ...prev]);
       setMessage('');
@@ -161,7 +164,10 @@ export const BasaltApp: React.FC = () => {
     
     setIsLoading(true);
     try {
-      const userInscriptions = await solanaService.getInscriptionsByAddress(publicKey.toString());
+      const config = await solanaService.getApiConfig();
+      const userInscriptions = config.persistentRecords
+        ? (await solanaService.getWalletRecords(publicKey.toString(), 'sent')).records
+        : await solanaService.getInscriptionsByAddress(publicKey.toString());
       userInscriptions.sort((a, b) => b.timestamp - a.timestamp);
       if (accountRef.current === publicKey.toBase58()) { setInscriptions(userInscriptions); setCurrentPage(1); }
 
@@ -209,11 +215,11 @@ export const BasaltApp: React.FC = () => {
     const estimateFee = async () => {
       if (solanaService && message.trim()) {
         try {
-          const fee = await solanaService.calculateInscriptionFee(message.trim(), inscriptionType, priority);
+          const fee = await solanaService.calculateInscriptionFee(message.trim(), inscriptionType, priority, publicKey?.toBase58(), recipient.trim() || undefined);
           if (!cancelled) setEstimatedFee(fee);
         } catch (error) {
           console.error('估算费用失败:', error);
-          setEstimatedFee(null);
+          if (!cancelled) setEstimatedFee(null);
         }
       } else {
         setEstimatedFee(null);
@@ -222,7 +228,7 @@ export const BasaltApp: React.FC = () => {
 
     const timeoutId = setTimeout(estimateFee, 500);
     return () => { cancelled = true; clearTimeout(timeoutId); };
-  }, [solanaService, message, inscriptionType, priority]);
+  }, [solanaService, message, inscriptionType, priority, publicKey, recipient]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-basalt-50 to-basalt-100">
@@ -354,7 +360,7 @@ export const BasaltApp: React.FC = () => {
                       maxLength={280}
                       className="input-field"
                     />
-                    <div className="mt-1 text-xs text-basalt-500 text-right">{message.length}/280</div>
+                    <div className="mt-1 text-xs text-basalt-500 text-right">{message.length}/280 字符 · {new TextEncoder().encode(message).length}/560 UTF-8 字节</div>
                   </div>
 
                   <div>
@@ -415,6 +421,7 @@ export const BasaltApp: React.FC = () => {
                               <div>优先费档位: {priority === 'low' ? '低' : priority === 'high' ? '高' : '中'}</div>
                               <div>网络费用: {(estimatedFee.networkFee / 1000000000).toFixed(6)} SOL</div>
                               <div>服务费: {estimatedFee.serviceFeeSOL.toFixed(6)} SOL</div>
+                              <div>链上存储储备: {(estimatedFee.storageRentSOL || 0).toFixed(6)} SOL（一次性，当前不支持退回）</div>
                               {estimatedFee.serviceFeeWallet && (
                                 <div className="text-xs text-basalt-400 mt-1 flex items-center gap-1">
                                   <span>服务费收款地址:</span>
@@ -479,11 +486,12 @@ export const BasaltApp: React.FC = () => {
 
               <section className="card max-w-xl mx-auto" aria-label="铭刻记录">
                 <h3>铭刻记录 ({inscriptions.length})</h3>
-                {getCurrentPageData().map(item => <article key={item.signature} className="my-4 border-b p-3">
+                <p className="text-xs">最新记录；完整收发目录与更早记录请使用下方信息寻回。</p>
+                {getCurrentPageData().map(item => <article key={item.recoveryCode || item.signature} className="my-4 border-b p-3">
                   <p className="whitespace-pre-wrap break-words">{item.message}</p>
                   <p className="text-xs break-all">发送者：{item.sender}</p>
                   {item.recipient && <p className="text-xs break-all">接收者：{item.recipient}</p>}
-                  <a href={`https://explorer.solana.com/tx/${item.signature}?cluster=devnet`} target="_blank" rel="noreferrer">{item.status || 'confirmed'} · 查看交易</a>
+                  <a href={`https://explorer.solana.com/${item.recordAddress ? 'address/'+item.recordAddress : 'tx/'+item.signature}?cluster=devnet`} target="_blank" rel="noreferrer">{item.status || 'confirmed'} · 查看链上记录</a>
                 </article>)}
                 {!inscriptions.length && <p>暂无记录</p>}
                 <button disabled={currentPage <= 1} onClick={() => setCurrentPage(p => p - 1)}>上一页</button>
@@ -537,6 +545,7 @@ export const BasaltApp: React.FC = () => {
             </div>
           </div>
         )}
+        <RecoveryPanel service={solanaService} wallet={publicKey?.toBase58()} lastReceipt={lastReceipt}/>
       </main>
     </div>
   );
