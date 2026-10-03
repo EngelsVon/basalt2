@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { PublicKey } from '@solana/web3.js';
-import { SolanaService, type InscriptionData } from '../services/solanaService';
-import { Heart, Search, Wallet, ChevronRight, ExternalLink } from 'lucide-react';
+import { SolanaService, type FeeResponseData, type InscriptionData } from '../services/solanaService';
+import { Heart, Search, Wallet } from 'lucide-react';
 
 export const BasaltApp: React.FC = () => {
   const { publicKey, sendTransaction, connected, signTransaction } = useWallet();
@@ -17,10 +16,10 @@ export const BasaltApp: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchHistory, setSearchHistory] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(inscriptions.length / 5));
   const itemsPerPage = 5;
   const [balance, setBalance] = useState<number | null>(null);
-  const [estimatedFee, setEstimatedFee] = useState<any | null>(null);
+  const [estimatedFee, setEstimatedFee] = useState<FeeResponseData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [solanaService, setSolanaService] = useState<SolanaService | null>(null);
   const [isSearching, setIsSearching] = useState(false);
@@ -33,24 +32,16 @@ export const BasaltApp: React.FC = () => {
     }
   }, [connection]);
 
-  // 获取余额和费用估算
-  const fetchBalance = async () => {
-    if (publicKey && solanaService) {
-      try {
-        const balance = await solanaService.getBalance(publicKey);
-        setBalance(balance);
-        
-        if (message.trim()) {
-          const feeData = await solanaService.calculateInscriptionFee(message.trim(), inscriptionType, priority);
-          setEstimatedFee(feeData);
-        } else {
-          setEstimatedFee(null);
-        }
-      } catch (error) {
-        console.error('获取余额失败:', error);
-      }
-    }
-  };
+  const accountRef = useRef(publicKey?.toBase58());
+  accountRef.current = publicKey?.toBase58();
+  const fetchBalance = useCallback(async () => {
+    if (!publicKey || !solanaService) return;
+    const address = publicKey.toBase58();
+    try {
+      const value = await solanaService.getBalance(publicKey);
+      if (accountRef.current === address) setBalance(value);
+    } catch (error) { console.error(error); }
+  }, [publicKey, solanaService]);
 
   // 铭刻消息
   const handleInscribe = async () => {
@@ -88,7 +79,7 @@ export const BasaltApp: React.FC = () => {
       setPriority('medium');
       
       if (inscriptionData.status === 'pending') {
-        alert(`⏰ 交易已提交但确认中\n\n交易签名: ${inscriptionData.signature}\n\n由于网络拥堵，交易确认可能需要更长时间。\n您可以在 Solana Explorer 中查看交易状态。\n\n注意：如果交易失败，费用不会被扣除。`);
+        alert(`⏰ 交易已提交但确认中\n\n交易签名: ${inscriptionData.signature}\n\n由于网络拥堵，交易确认可能需要更长时间。\n您可以在 Solana Explorer 中查看交易状态。\n\n注意：链上执行失败仍可能扣除网络费，请先查询签名再重试。`);
       } else {
         alert(`✅ 铭刻成功！\n交易签名: ${inscriptionData.signature}`);
       }
@@ -107,7 +98,7 @@ export const BasaltApp: React.FC = () => {
     setSearchQuery('');
     setInscriptions([]);
     setCurrentPage(1);
-    setTotalPages(1);
+
     if (connected && publicKey) {
       loadUserInscriptions();
     }
@@ -135,7 +126,7 @@ export const BasaltApp: React.FC = () => {
       if (searchTerm.length >= 32) {
         try {
           results = await solanaService.getInscriptionsByAddress(searchTerm);
-        } catch (e) {
+        } catch {
           console.warn('按地址查询失败，尝试关键字搜索');
         }
       }
@@ -150,11 +141,11 @@ export const BasaltApp: React.FC = () => {
       if (results.length === 0) {
         alert('未找到相关记录');
         setInscriptions([]);
-        setTotalPages(1);
+
       } else {
         results.sort((a, b) => b.timestamp - a.timestamp);
         setInscriptions(results);
-        setTotalPages(Math.ceil(results.length / itemsPerPage));
+
       }
     } catch (error) {
       console.error('搜索失败:', error);
@@ -165,21 +156,21 @@ export const BasaltApp: React.FC = () => {
   };
 
   // 加载用户的铭刻记录
-  const loadUserInscriptions = async () => {
+  const loadUserInscriptions = useCallback(async () => {
     if (!publicKey || !solanaService) return;
     
     setIsLoading(true);
     try {
       const userInscriptions = await solanaService.getInscriptionsByAddress(publicKey.toString());
       userInscriptions.sort((a, b) => b.timestamp - a.timestamp);
-      setInscriptions(userInscriptions);
-      setTotalPages(Math.ceil(userInscriptions.length / itemsPerPage));
+      if (accountRef.current === publicKey.toBase58()) { setInscriptions(userInscriptions); setCurrentPage(1); }
+
     } catch (error) {
       console.error('加载铭刻记录失败:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [publicKey, solanaService]);
 
   // 获取当前页的数据
   const getCurrentPageData = () => {
@@ -189,18 +180,22 @@ export const BasaltApp: React.FC = () => {
   };
 
   useEffect(() => {
+    setBalance(null);
+    setInscriptions([]);
+    setCurrentPage(1);
     if (connected && publicKey && solanaService) {
       fetchBalance();
       loadUserInscriptions();
     }
-  }, [connected, publicKey, solanaService]);
+  }, [connected, publicKey, solanaService, fetchBalance, loadUserInscriptions]);
   
   // 加载搜索历史
   useEffect(() => {
     const savedHistory = localStorage.getItem('basalt_search_history');
     if (savedHistory) {
       try {
-        setSearchHistory(JSON.parse(savedHistory));
+        const parsed: unknown = JSON.parse(savedHistory);
+        if (Array.isArray(parsed)) setSearchHistory(parsed.filter((x): x is string => typeof x === 'string').slice(0, 10));
       } catch (error) {
         console.error('加载搜索历史失败:', error);
       }
@@ -209,11 +204,13 @@ export const BasaltApp: React.FC = () => {
 
   // 实时费用估算（随消息/类型/优先费变化）
   useEffect(() => {
+    let cancelled = false;
+    setEstimatedFee(null);
     const estimateFee = async () => {
       if (solanaService && message.trim()) {
         try {
           const fee = await solanaService.calculateInscriptionFee(message.trim(), inscriptionType, priority);
-          setEstimatedFee(fee);
+          if (!cancelled) setEstimatedFee(fee);
         } catch (error) {
           console.error('估算费用失败:', error);
           setEstimatedFee(null);
@@ -224,7 +221,7 @@ export const BasaltApp: React.FC = () => {
     };
 
     const timeoutId = setTimeout(estimateFee, 500);
-    return () => clearTimeout(timeoutId);
+    return () => { cancelled = true; clearTimeout(timeoutId); };
   }, [solanaService, message, inscriptionType, priority]);
 
   return (
@@ -456,7 +453,7 @@ export const BasaltApp: React.FC = () => {
 
                   <button
                     onClick={handleInscribe}
-                    disabled={!message.trim() || isInscribing || !connected || (estimatedFee && balance !== null && balance < (typeof estimatedFee === 'object' ? estimatedFee.totalFeeSOL : estimatedFee))}
+                    disabled={!message.trim() || isInscribing || !connected || !estimatedFee || (balance !== null && balance < estimatedFee.totalFeeSOL)}
                     className={`w-full px-8 py-3 text-lg font-semibold rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 ${
                       !message.trim() || !connected || (estimatedFee && balance !== null && balance < (typeof estimatedFee === 'object' ? estimatedFee.totalFeeSOL : estimatedFee))
                         ? 'bg-basalt-300 text-basalt-500 cursor-not-allowed'
@@ -479,6 +476,20 @@ export const BasaltApp: React.FC = () => {
                   </button>
                 </div>
               </div>
+
+              <section className="card max-w-xl mx-auto" aria-label="铭刻记录">
+                <h3>铭刻记录 ({inscriptions.length})</h3>
+                {getCurrentPageData().map(item => <article key={item.signature} className="my-4 border-b p-3">
+                  <p className="whitespace-pre-wrap break-words">{item.message}</p>
+                  <p className="text-xs break-all">发送者：{item.sender}</p>
+                  {item.recipient && <p className="text-xs break-all">接收者：{item.recipient}</p>}
+                  <a href={`https://explorer.solana.com/tx/${item.signature}?cluster=devnet`} target="_blank" rel="noreferrer">{item.status || 'confirmed'} · 查看交易</a>
+                </article>)}
+                {!inscriptions.length && <p>暂无记录</p>}
+                <button disabled={currentPage <= 1} onClick={() => setCurrentPage(p => p - 1)}>上一页</button>
+                <span className="mx-4">{currentPage} / {totalPages}</span>
+                <button disabled={currentPage >= totalPages} onClick={() => setCurrentPage(p => p + 1)}>下一页</button>
+              </section>
 
               {/* 搜索区域 */}
               <div className="card max-w-xl mx-auto">

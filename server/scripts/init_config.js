@@ -87,8 +87,15 @@ function ixDiscriminator(name) {
     const minCuPrice = parseInt(process.env.MIN_CU_PRICE_MICROLAMPORTS || '10000', 10);
     const minCuLimit = parseInt(process.env.MIN_CU_LIMIT || '100000', 10);
 
-    const [configPda, bump] = PublicKey.findProgramAddressSync([Buffer.from('config')], programId);
+    const [configPda] = PublicKey.findProgramAddressSync([Buffer.from('config')], programId);
 
+    if (await connection.getGenesisHash() !== 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1') throw new Error('Expected Devnet');
+    const existing = await connection.getAccountInfo(configPda);
+    if (existing) {
+      if (!existing.owner.equals(programId)) throw new Error('Unexpected config owner');
+      console.log('Config already initialized:', configPda.toBase58());
+      return;
+    }
     // Build initialize_config instruction
     const data = Buffer.concat([
       ixDiscriminator('initialize_config'),
@@ -105,14 +112,14 @@ function ixDiscriminator(name) {
     ];
 
     const ix = new TransactionInstruction({ programId, keys, data });
-    const { blockhash } = await connection.getLatestBlockhash();
+    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash();
     const tx = new Transaction({ recentBlockhash: blockhash, feePayer: payer.publicKey }).add(ix);
 
     console.log('Sending initialize_config...');
     const sig = await connection.sendTransaction(tx, [payer], { skipPreflight: false });
     console.log('Tx sent:', sig);
 
-    const conf = await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight }, 'confirmed');
+    const conf = await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
     if (conf.value.err) {
       console.error('Transaction error:', conf.value.err);
       process.exit(1);

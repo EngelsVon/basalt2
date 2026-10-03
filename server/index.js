@@ -3,7 +3,7 @@ const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '.env') });
 
 const { Connection, PublicKey, Transaction, SystemProgram, LAMPORTS_PER_SOL } = require('@solana/web3.js');
 const { createMemoInstruction } = require('@solana/spl-memo');
@@ -13,7 +13,8 @@ const PORT = process.env.PORT || 3001;
 
 // 可配置服务费参数
 const SERVICE_FEE_WALLET = process.env.SERVICE_FEE_WALLET || '6TnyoYQzXqZV4Awu8kiUYX343MTAa7dTx7tLiBzcoT4Z';
-const SERVICE_FEE_RATE = parseFloat(process.env.SERVICE_FEE_RATE || '20'); // 百分比
+const SERVICE_FEE_RATE = process.env.SERVICE_FEE_BPS !== undefined ? Number(process.env.SERVICE_FEE_BPS) / 100 : Number(process.env.SERVICE_FEE_RATE || '20');
+if (!Number.isFinite(SERVICE_FEE_RATE) || SERVICE_FEE_RATE < 0 || SERVICE_FEE_RATE > 100) throw new Error('Invalid service fee rate'); // 百分比
 // 取消下限：按用户要求无下限
 const MIN_SERVICE_FEE_LAMPORTS = 0;
 
@@ -21,7 +22,7 @@ const MIN_SERVICE_FEE_LAMPORTS = 0;
 const PROGRAM_ID = process.env.PROGRAM_ID || null;
 
 // Solana连接配置 - 使用更稳定的RPC端点
-const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://devnet.helius-rpc.com/?api-key=demo';
+const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
 const connection = new Connection(SOLANA_RPC_URL, {
   commitment: 'confirmed',
   confirmTransactionInitialTimeout: 60000,
@@ -71,7 +72,7 @@ async function fetchOnchainConfig() {
     if (info.data.length < 8 + 32 + 32 + 2 + 8 + 4) return null;
     const data = Buffer.from(info.data);
     // 可选鉴别符校验（不强制）
-    // if (!data.subarray(0, 8).equals(disc)) return null;
+    if (!info.owner.equals(programKey) || !data.subarray(0, 8).equals(disc)) throw new Error('Invalid config account');
 
     let offset = 8; // 跳过鉴别符
     const authority = new PublicKey(data.subarray(offset, offset + 32));
@@ -94,18 +95,18 @@ async function fetchOnchainConfig() {
     };
   } catch (e) {
     console.warn('读取链上 Config 失败:', e?.message || e);
-    return null;
+    throw e;
   }
 }
 
 // 中间件配置
 app.use(helmet());
 app.use(cors({
-  origin: (origin, callback) => callback(null, true), // 放宽CORS以便本地开发(5173/5174/5175等端口)
+  origin: (origin, callback) => callback(null, !origin || (process.env.CLIENT_ORIGIN || 'http://localhost:5173').split(',').includes(origin)), // 放宽CORS以便本地开发(5173/5174/5175等端口)
   credentials: true
 }));
 app.use(morgan('combined'));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '16kb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // 速率限制
@@ -136,6 +137,7 @@ app.get('/api/config', async (req, res) => {
   };
   try {
     const onchain = await fetchOnchainConfig();
+    if (PROGRAM_ID && !onchain) return res.status(503).json({ success: false, error: 'Program config unavailable' });
     const programMode = Boolean(PROGRAM_ID);
 
     res.json({
@@ -152,19 +154,7 @@ app.get('/api/config', async (req, res) => {
       }
     });
   } catch (e) {
-    res.json({
-      success: true,
-      data: {
-        network: NETWORK_NAME,
-        serviceFeeWallet: SERVICE_FEE_WALLET,
-        serviceFeeRate: SERVICE_FEE_RATE,
-        priorityPresets: presets,
-        defaultPriority: 'medium',
-        programMode: Boolean(PROGRAM_ID),
-        programId: PROGRAM_ID,
-        programConfig: null,
-      }
-    });
+    res.status(503).json({ success: false, error: 'Program configuration unavailable' });
   }
 });
 
@@ -182,6 +172,9 @@ app.get('/api/network/status', async (req, res) => {
 app.post('/api/inscription/calculate-fee', async (req, res) => {
   try {
     const { message = '', type = 'general', priority = 'medium' } = req.body || {};
+    if (typeof message !== 'string' || !message.trim() || message.length > 280 || !['general','love','agreement'].includes(type) || !['low','medium','high'].includes(priority)) return res.status(400).json({ success: false, error: 'Invalid inscription input' });
+    const onchain = await fetchOnchainConfig();
+    if (PROGRAM_ID && !onchain) return res.status(503).json({ success: false, error: 'Program config unavailable' });
 
     // 构建模拟交易以估算基础网络费（不含优先费）
     const dummyPayer = new PublicKey('11111111111111111111111111111111');
@@ -216,18 +209,19 @@ app.post('/api/inscription/calculate-fee', async (req, res) => {
     const baseNetworkFee = fee.value;
 
     // 计算优先费（按固定档位，确保 Devnet 也为非 0）
-    const { cuLimit, cuPriceMicroLamports } = getPriorityPreset(priority);
+    const preset = getPriorityPreset(priority);
+    const cuLimit = Math.max(preset.cuLimit, onchain?.minCuLimit || 0);
+    const cuPriceMicroLamports = Math.max(preset.cuPriceMicroLamports, onchain?.minCuPrice || 0);
     const priorityFeeLamports = Math.ceil((cuLimit * cuPriceMicroLamports) / 1_000_000);
 
     // 合计“网络费” = 基础费 + 优先费（不含服务费）
     const networkFee = baseNetworkFee + priorityFeeLamports;
 
     // 如果有链上配置，使用链上 service_fee_bps，否则使用本地 SERVICE_FEE_RATE
-    const onchain = await fetchOnchainConfig();
     const bps = onchain ? onchain.serviceFeeBps : Math.round((isNaN(SERVICE_FEE_RATE) ? 0 : SERVICE_FEE_RATE) * 100);
 
     // 服务费 = 优先费的 bps/10000（向下取整以避免前端高估；合约内部使用向上取整，前端仅做展示与预估）
-    const rawServiceFee = Math.floor(priorityFeeLamports * (bps / 10000));
+    const rawServiceFee = Math.ceil(priorityFeeLamports * (bps / 10000));
     const serviceFee = Math.max(rawServiceFee, MIN_SERVICE_FEE_LAMPORTS);
 
     const totalFee = networkFee + serviceFee;
@@ -277,6 +271,7 @@ app.get('/api/account/balance/:address', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+if (require.main === module) app.listen(PORT, () => {
   console.log(`Basalt server listening on http://localhost:${PORT} - network=${NETWORK_NAME}`);
 });
+module.exports = { app, getPriorityPreset };

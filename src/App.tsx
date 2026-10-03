@@ -1,4 +1,3 @@
-import React from 'react';
 import { AppWalletProvider } from './components/WalletProvider';
 import { BasaltApp } from './components/BasaltApp';
 

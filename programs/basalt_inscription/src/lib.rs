@@ -7,6 +7,7 @@ pub mod basalt_inscription {
     use super::*;
 
     pub fn initialize_config(ctx: Context<InitializeConfig>, service_fee_wallet: Pubkey, service_fee_bps: u16, min_cu_price: u64, min_cu_limit: u32) -> Result<()> {
+        validate_config(service_fee_bps, min_cu_price, min_cu_limit)?;
         let cfg = &mut ctx.accounts.config;
         cfg.authority = ctx.accounts.authority.key();
         cfg.service_fee_wallet = service_fee_wallet;
@@ -18,6 +19,7 @@ pub mod basalt_inscription {
 
     pub fn update_config(ctx: Context<UpdateConfig>, service_fee_wallet: Option<Pubkey>, service_fee_bps: Option<u16>, min_cu_price: Option<u64>, min_cu_limit: Option<u32>) -> Result<()> {
         require!(ctx.accounts.authority.key() == ctx.accounts.config.authority, ErrorCode::Unauthorized);
+        validate_config(service_fee_bps.unwrap_or(ctx.accounts.config.service_fee_bps), min_cu_price.unwrap_or(ctx.accounts.config.min_cu_price), min_cu_limit.unwrap_or(ctx.accounts.config.min_cu_limit))?;
         if let Some(w) = service_fee_wallet { ctx.accounts.config.service_fee_wallet = w; }
         if let Some(b) = service_fee_bps { ctx.accounts.config.service_fee_bps = b; }
         if let Some(p) = min_cu_price { ctx.accounts.config.min_cu_price = p; }
@@ -81,9 +83,14 @@ pub mod basalt_inscription {
             require!(actual_price == cu_price_micro_lamports, ErrorCode::ComputeBudgetPriceMismatch);
         }
 
+        let sysvar = ctx.accounts.instructions_sysvar.to_account_info();
+        let current = anchor_lang::solana_program::sysvar::instructions::load_current_index_checked(&sysvar)? as usize;
+        let memo = anchor_lang::solana_program::sysvar::instructions::load_instruction_at_checked(current + 1, &sysvar)?;
+        require!(memo.program_id == anchor_lang::solana_program::pubkey!("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"), ErrorCode::InvalidMemo);
+        require!(anchor_lang::solana_program::hash::hash(&memo.data).to_bytes() == memo_hash, ErrorCode::InvalidMemo);
+
         // 计算优先费与服务费（只对优先费抽成）
-        let priority_fee_lamports: u64 = ((cu_limit as u128 * cu_price_micro_lamports as u128) / 1_000_000u128) as u64;
-        let service_fee_lamports: u64 = (priority_fee_lamports * ctx.accounts.config.service_fee_bps as u64 + 9999) / 10000; // 向上取整
+        let (priority_fee_lamports, service_fee_lamports) = calculate_fees(cu_limit, cu_price_micro_lamports, ctx.accounts.config.service_fee_bps)?;
 
         // 从签名者转账服务费到平台钱包
         if service_fee_lamports > 0 {
@@ -130,6 +137,10 @@ pub struct InitializeConfig<'info> {
     )]
     pub config: Account<'info, Config>,
     pub system_program: Program<'info, System>,
+    #[account(constraint = program.programdata_address()? == Some(program_data.key()))]
+    pub program: Program<'info, crate::program::BasaltInscription>,
+    #[account(constraint = program_data.upgrade_authority_address == Some(authority.key()) @ ErrorCode::Unauthorized)]
+    pub program_data: Account<'info, ProgramData>,
 }
 
 #[derive(Accounts)]
@@ -143,7 +154,7 @@ pub struct UpdateConfig<'info> {
 pub struct Inscribe<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
-    #[account(mut, seeds = [b"config"], bump)]
+    #[account(seeds = [b"config"], bump)]
     pub config: Account<'info, Config>,
     /// CHECK: 转账目的账户由配置给出
     #[account(mut, address = config.service_fee_wallet)]
@@ -180,6 +191,12 @@ pub struct InscribedEvent {
 
 #[error_code]
 pub enum ErrorCode {
+    #[msg("invalid configuration")]
+    InvalidConfig,
+    #[msg("fee overflow")]
+    FeeOverflow,
+    #[msg("memo instruction/hash mismatch")]
+    InvalidMemo,
     #[msg("unauthorized")] 
     Unauthorized,
     #[msg("cu_limit too low")] 
@@ -194,4 +211,33 @@ pub enum ErrorCode {
     ComputeBudgetLimitMismatch,
     #[msg("compute unit price mismatch with transaction")] 
     ComputeBudgetPriceMismatch,
+}
+fn validate_config(bps: u16, price: u64, limit: u32) -> Result<()> {
+    require!(bps <= 10_000 && limit > 0 && limit <= 1_400_000 && price <= 1_000_000_000, ErrorCode::InvalidConfig);
+    Ok(())
+}
+
+fn calculate_fees(limit: u32, price: u64, bps: u16) -> Result<(u64, u64)> {
+    let priority = (limit as u128 * price as u128 + 999_999) / 1_000_000;
+    let service = (priority * bps as u128 + 9_999) / 10_000;
+    require!(priority <= u64::MAX as u128 && service <= u64::MAX as u128, ErrorCode::FeeOverflow);
+    Ok((priority as u64, service as u64))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rounds_up_and_uses_wide_arithmetic() {
+        assert_eq!(calculate_fees(1, 1, 50).unwrap(), (1, 1));
+        assert_eq!(calculate_fees(200_000, 50_000, 50).unwrap(), (10_000, 50));
+        assert!(calculate_fees(u32::MAX, u64::MAX, 10_000).is_err());
+    }
+    #[test]
+    fn rejects_invalid_config() {
+        assert!(validate_config(10_001, 1, 1).is_err());
+        assert!(validate_config(50, 1, 1_400_001).is_err());
+        assert!(validate_config(50, 1, 0).is_err());
+        assert!(validate_config(50, 20_000, 120_000).is_ok());
+    }
 }
