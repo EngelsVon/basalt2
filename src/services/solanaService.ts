@@ -89,7 +89,7 @@ export class SolanaService {
       numbers.writeUInt32LE(cuLimit); numbers.writeBigUInt64LE(BigInt(cuPrice), 4);
       tx.add(new TransactionInstruction({ programId, keys: [
         { pubkey: senderPublicKey, isSigner: true, isWritable: true },
-        { pubkey: configPda, isSigner: false, isWritable: false },
+        { pubkey: configPda, isSigner: false, isWritable: true },
         { pubkey: new PublicKey(config.programConfig!.serviceFeeWallet), isSigner: false, isWritable: true },
         { pubkey: new PublicKey('Sysvar1nstructions1111111111111111111111111'), isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
@@ -120,17 +120,15 @@ export class SolanaService {
       signature = await sendTransaction(tx, this.connection);
     }
     const result: InscriptionData = { message, sender: senderPublicKey.toBase58(), recipient, timestamp, signature, type, status: 'pending' };
-    let confirmation;
-    try {
-      confirmation = await this.connection.confirmTransaction({ signature, ...latest }, 'confirmed');
-    } catch {
-      const status = await this.connection.getSignatureStatus(signature, { searchTransactionHistory: true }).catch(() => null);
-      if (status?.value?.err) throw new Error(`交易失败 ${signature}: ${JSON.stringify(status.value.err)}`);
-      if (status?.value?.confirmationStatus === 'confirmed' || status?.value?.confirmationStatus === 'finalized') result.status = 'confirmed';
-      return result;
+    // HTTP polling works through the API proxy without an unproxied WebSocket.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      const response = await this.connection.getSignatureStatus(signature, { searchTransactionHistory: true }).catch(() => null);
+      const status = response?.value;
+      if (status?.err) throw new Error(`交易失败 ${signature}: ${JSON.stringify(status.err)}`);
+      if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized') return { ...result, status: 'confirmed' };
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
-    if (confirmation.value.err) throw new Error(`交易失败 ${signature}: ${JSON.stringify(confirmation.value.err)}`);
-    return { ...result, status: 'confirmed' };
+    return result;
   }
 
   async getInscriptionBySignature(signature: string): Promise<InscriptionData | null> {

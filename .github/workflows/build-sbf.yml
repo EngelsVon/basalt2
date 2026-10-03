@@ -103,11 +103,7 @@ jobs:
           path: |
             programs/basalt_inscription/Cargo.lock
             target/deploy/*.so
-            target/deploy/*.json
-            target/deploy/*.key
             programs/basalt_inscription/target/deploy/*.so
-            programs/basalt_inscription/target/deploy/*.json
-            programs/basalt_inscription/target/deploy/*.key
           if-no-files-found: error
 
   deploy_devnet:

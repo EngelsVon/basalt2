@@ -19,14 +19,16 @@
   "author": "Basalt Team",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2",
+    "@solana/spl-memo": "^0.2.5",
+    "@solana/web3.js": "^1.87.6",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
-    "@solana/web3.js": "^1.87.6",
-    "@solana/spl-memo": "^0.2.5",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
     "helmet": "^7.1.0",
+    "https-proxy-agent": "^7.0.6",
     "morgan": "^1.10.0",
-    "express-rate-limit": "^7.1.5"
+    "node-fetch": "^2.7.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2"

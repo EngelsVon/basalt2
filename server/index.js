@@ -23,11 +23,8 @@ const PROGRAM_ID = process.env.PROGRAM_ID || null;
 
 // Solana连接配置 - 使用更稳定的RPC端点
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
-const connection = new Connection(SOLANA_RPC_URL, {
-  commitment: 'confirmed',
-  confirmTransactionInitialTimeout: 60000,
-  wsEndpoint: undefined // 禁用WebSocket连接以提高稳定性
-});
+const { createConnection, rpcFetch } = require('./rpc');
+const connection = createConnection();
 
 // 动态识别网络名称，便于前端诊断
 const NETWORK_NAME = /testnet/i.test(SOLANA_RPC_URL)
@@ -118,6 +115,16 @@ const limiter = rateLimit({
   }
 });
 app.use('/api/', limiter);
+
+// Fixed-upstream RPC relay: browsers use the same Devnet connection as the API.
+const rpcMethods = new Set(['getAccountInfo', 'getBalance', 'getLatestBlockhash', 'getBlockHeight', 'getFeeForMessage', 'getSignatureStatuses', 'getTransaction', 'getSignaturesForAddress', 'sendTransaction', 'simulateTransaction', 'getGenesisHash', 'getVersion']);
+app.post('/api/rpc', async (req, res) => {
+  if (!req.body || req.body.jsonrpc !== '2.0' || !rpcMethods.has(req.body.method)) return res.status(400).json({ error: 'Unsupported RPC method' });
+  try {
+    const response = await rpcFetch(SOLANA_RPC_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req.body) });
+    res.status(response.status).json(await response.json());
+  } catch (error) { res.status(502).json({ error: 'RPC upstream unavailable' }); }
+});
 
 // 健康检查端点
 app.get('/health', (req, res) => {

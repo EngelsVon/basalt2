@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-basalt_inscription = "BuuvUksGkGmaPm7eB2CKbM2eTiqS9UCr5nnBGkaUKGJG"
+basalt_inscription = "GRJr1pdTLEqpWRiSvvWCLZViKqxD7tiMYpPUEjUUgZin"
 
 [registry]
 url = "https://api.apr.dev"

@@ -16,7 +16,6 @@ const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const {
-  Connection,
   PublicKey,
   Keypair,
   SystemProgram,
@@ -69,7 +68,7 @@ function ixDiscriminator(name) {
     const programId = new PublicKey(PROGRAM_ID);
 
     const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
-    const connection = new Connection(SOLANA_RPC_URL, 'confirmed');
+    const connection = require('../rpc').createConnection();
 
     const keypairPath = process.env.DEPLOYER_KEYPAIR || '~/.config/solana/id.json';
     const payer = loadKeypair(keypairPath);
@@ -89,13 +88,14 @@ function ixDiscriminator(name) {
 
     const [configPda] = PublicKey.findProgramAddressSync([Buffer.from('config')], programId);
 
-    if (await connection.getGenesisHash() !== 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1') throw new Error('Expected Devnet');
+    if (await connection.getGenesisHash() !== 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error('Expected Devnet');
     const existing = await connection.getAccountInfo(configPda);
     if (existing) {
       if (!existing.owner.equals(programId)) throw new Error('Unexpected config owner');
       console.log('Config already initialized:', configPda.toBase58());
       return;
     }
+    const [programData] = PublicKey.findProgramAddressSync([programId.toBuffer()], new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111'));
     // Build initialize_config instruction
     const data = Buffer.concat([
       ixDiscriminator('initialize_config'),
@@ -109,6 +109,8 @@ function ixDiscriminator(name) {
       { pubkey: payer.publicKey, isSigner: true, isWritable: true },
       { pubkey: configPda, isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: programId, isSigner: false, isWritable: false },
+      { pubkey: programData, isSigner: false, isWritable: false },
     ];
 
     const ix = new TransactionInstruction({ programId, keys, data });
@@ -119,11 +121,7 @@ function ixDiscriminator(name) {
     const sig = await connection.sendTransaction(tx, [payer], { skipPreflight: false });
     console.log('Tx sent:', sig);
 
-    const conf = await connection.confirmTransaction({ signature: sig, blockhash, lastValidBlockHeight }, 'confirmed');
-    if (conf.value.err) {
-      console.error('Transaction error:', conf.value.err);
-      process.exit(1);
-    }
+    await require('../rpc').confirm(connection, sig, lastValidBlockHeight);
 
     console.log('Config initialized at PDA:', configPda.toBase58());
     console.log('Parameters:', { serviceFeeBps, minCuPrice, minCuLimit, serviceFeeWallet: serviceFeeWallet.toBase58() });
