@@ -1,5 +1,5 @@
 # ci: retrigger push at 2025-09-12T07:32:00Z
-name: Build SBF Program (Solana v1.17.28)
+name: Build SBF Program (Agave v3.0.1)
 
 on:
   workflow_dispatch:
@@ -33,25 +33,25 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq curl ca-certificates pkg-config libssl-dev build-essential git
 
-      - name: Install Rust toolchain (Cargo 1.85.1 (Rust 2024 compatible))
+      - name: Install Rust toolchain (Cargo 1.95.0 (Rust 2024 compatible))
         shell: bash
         run: |
           set -euxo pipefail
           curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          "$HOME/.cargo/bin/rustup" toolchain install 1.85.1 --profile minimal
-          "$HOME/.cargo/bin/rustup" default 1.85.1
+          "$HOME/.cargo/bin/rustup" toolchain install 1.95.0 --profile minimal
+          "$HOME/.cargo/bin/rustup" default 1.95.0
           "$HOME/.cargo/bin/cargo" --version
 
-      - name: Install Solana toolchain v1.17.28 (with retry and fallback)
+      - name: Install Solana toolchain v3.0.1 (with retry and fallback)
         env:
-          SOLANA_VERSION: v1.17.28
+          SOLANA_VERSION: v3.0.1
         shell: bash
         run: |
           set -euxo pipefail
           INSTALL_OK=0
           # Try official installer with retries
-          if curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 "https://release.solana.com/${SOLANA_VERSION}/install" | sh -s -; then
+          if curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 "https://release.anza.xyz/${SOLANA_VERSION}/install" | sh -s -; then
             INSTALL_OK=1
           else
             echo "[warn] Installer script failed, trying GitHub Releases fallback..."
@@ -61,7 +61,7 @@ jobs:
               aarch64) TARBALL="solana-release-aarch64-unknown-linux-gnu.tar.bz2" ;;
               *) echo "Unsupported arch: $ARCH"; exit 1 ;;
             esac
-            TARBALL_URL="https://github.com/solana-labs/solana/releases/download/${SOLANA_VERSION}/${TARBALL}"
+            TARBALL_URL="https://github.com/anza-xyz/agave/releases/download/${SOLANA_VERSION}/${TARBALL}"
             TMPDIR=$(mktemp -d)
             pushd "$TMPDIR"
             curl -fL --retry 6 --retry-all-errors --connect-timeout 15 -o solana.tar.bz2 "$TARBALL_URL"
@@ -87,56 +87,21 @@ jobs:
           cargo --version || true
           cargo-build-sbf --version || true
 
-      - name: Ensure ahash in lockfile is >= 0.8.7 (best-effort)
+      - name: Build and test pinned SBF program
         shell: bash
         working-directory: programs/basalt_inscription
         run: |
-          set -euxo pipefail
-          SOL_CARGO="$HOME/.local/share/solana/install/active_release/bin/cargo"
-          USE_CARGO=""
-          if [ -x "$HOME/.cargo/bin/cargo" ]; then
-            USE_CARGO="$HOME/.cargo/bin/cargo"
-          elif [ -x "$SOL_CARGO" ]; then
-            USE_CARGO="$SOL_CARGO"
-          elif command -v cargo >/dev/null 2>&1; then
-            USE_CARGO="$(command -v cargo)"
-          fi
-      
-          if [ -n "$USE_CARGO" ]; then
-            # Ensure we don't keep a v4 lockfile produced by newer cargo
-            rm -f Cargo.lock
-            "$USE_CARGO" --version || true
-            "$USE_CARGO" update -p ahash --precise 0.8.7 || "$USE_CARGO" update -p ahash || true
-          else
-            echo "[info] No cargo available; skipping lockfile manipulation"
-          fi
-
-      - name: Build basalt_inscription program (SBF)
-        shell: bash
-        working-directory: programs/basalt_inscription
-        run: |
-          set -euxo pipefail
-          echo "[info] Pre-build: removing Cargo.lock to avoid v4 format issues"
-          rm -f Cargo.lock || true
-          # Pre-generate a compatible lockfile using Cargo 1.85 if available
-          "$HOME/.cargo/bin/cargo" --version || true
-          "$HOME/.cargo/bin/cargo" generate-lockfile || true
-          # Solana 1.17's embedded Cargo accepts lockfile v3, not Cargo 1.85's v4
-          sed -i -E 's/^version = 4$/version = 3/' Cargo.lock
-          ls -l || true
-      
-          # Use full path as fallback in case PATH update fails for any reason
-          if ! command -v cargo-build-sbf >/dev/null 2>&1; then
-            "$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf" -v
-          else
-            cargo-build-sbf -v
-          fi
+          set -euo pipefail
+          if [ ! -f Cargo.lock ]; then cargo generate-lockfile; fi
+          cargo test --locked
+          cargo-build-sbf --tools-version v1.57 -- --locked
 
       - name: Upload SBF artifacts
         uses: actions/upload-artifact@v4
         with:
           name: basalt_sbf_artifacts
           path: |
+            programs/basalt_inscription/Cargo.lock
             target/deploy/*.so
             target/deploy/*.json
             target/deploy/*.key
@@ -146,7 +111,7 @@ jobs:
           if-no-files-found: error
 
   deploy_devnet:
-    if: ${{ (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy == 'true') || github.event_name == 'push' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy }}
     needs: build
     runs-on: ubuntu-22.04
     steps:
@@ -159,9 +124,9 @@ jobs:
           name: basalt_sbf_artifacts
           path: artifacts
 
-      - name: Install Solana toolchain v1.17.28
+      - name: Install Solana toolchain v3.0.1
         env:
-          SOLANA_VERSION: v1.17.28
+          SOLANA_VERSION: v3.0.1
         shell: bash
         run: |
           set -euxo pipefail
@@ -170,7 +135,7 @@ jobs:
           if ! command -v solana >/dev/null 2>&1; then
             # Try official installer with retries
             for i in 1 2 3; do
-              if curl -fsSL --retry 6 --retry-all-errors --connect-timeout 20 "https://release.solana.com/${SOLANA_VERSION}/install" | sh -s -; then
+              if curl -fsSL --retry 6 --retry-all-errors --connect-timeout 20 "https://release.anza.xyz/${SOLANA_VERSION}/install" | sh -s -; then
                 break
               fi
               echo "installer attempt $i failed, retrying in 5s..." >&2
@@ -181,8 +146,8 @@ jobs:
               mkdir -p "${INSTALL_BASE}"
               cd "${INSTALL_BASE}"
               TARBALL="solana-release-x86_64-unknown-linux-gnu.tar.bz2"
-              URL_GH="https://github.com/solana-labs/solana/releases/download/${SOLANA_VERSION}/${TARBALL}"
-              URL_ALT="https://release.solana.com/${SOLANA_VERSION}/${TARBALL}"
+              URL_GH="https://github.com/anza-xyz/agave/releases/download/${SOLANA_VERSION}/${TARBALL}"
+              URL_ALT="https://release.anza.xyz/${SOLANA_VERSION}/${TARBALL}"
               curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_GH}" || \
               curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_ALT}"
               tar -xjf "${TARBALL}"
@@ -199,14 +164,14 @@ jobs:
           solana --version || true
           ls -la "${ACTIVE_BIN}"
       
-      - name: Install Rust toolchain (Cargo 1.85.1 (Rust 2024 compatible))
+      - name: Install Rust toolchain (Cargo 1.95.0 (Rust 2024 compatible))
         shell: bash
         run: |
           set -euxo pipefail
           curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 https://sh.rustup.rs | sh -s -- -y
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          "$HOME/.cargo/bin/rustup" toolchain install 1.85.1 --profile minimal
-          "$HOME/.cargo/bin/rustup" default 1.85.1
+          "$HOME/.cargo/bin/rustup" toolchain install 1.95.0 --profile minimal
+          "$HOME/.cargo/bin/rustup" default 1.95.0
           "$HOME/.cargo/bin/cargo" --version
 
       - name: Configure Solana and write keypairs
@@ -273,13 +238,10 @@ jobs:
                 BUILDER="cargo-build-sbf"
               fi
               pushd programs/basalt_inscription
-              rm -f Cargo.lock || true
               # Pre-generate a compatible lockfile with Cargo 1.85
               "$HOME/.cargo/bin/cargo" --version || true
-              "$HOME/.cargo/bin/cargo" generate-lockfile || true
-          # Solana 1.17's embedded Cargo accepts lockfile v3, not Cargo 1.85's v4
-          sed -i -E 's/^version = 4$/version = 3/' Cargo.lock
-              "$BUILDER" -v
+              test -f Cargo.lock || "$HOME/.cargo/bin/cargo" generate-lockfile
+              "$BUILDER" --tools-version v1.57 -- --locked
               popd
               # Export rebuilt .so path for later step to prefer
               if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
@@ -383,13 +345,10 @@ jobs:
                BUILDER="cargo-build-sbf"
              fi
              pushd programs/basalt_inscription
-             rm -f Cargo.lock || true
              # Pre-generate a compatible lockfile with Cargo 1.85
              "$HOME/.cargo/bin/cargo" --version || true
-             "$HOME/.cargo/bin/cargo" generate-lockfile || true
-          # Solana 1.17's embedded Cargo accepts lockfile v3, not Cargo 1.85's v4
-          sed -i -E 's/^version = 4$/version = 3/' Cargo.lock
-             "$BUILDER" -v
+             test -f Cargo.lock || "$HOME/.cargo/bin/cargo" generate-lockfile
+             "$BUILDER" --tools-version v1.57 -- --locked
              popd
              if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
                SO="programs/basalt_inscription/target/deploy/basalt_inscription.so"
