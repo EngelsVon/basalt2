@@ -148,7 +148,9 @@ export class SolanaService {
   }
 
   async getInscriptionsByAddress(address: string, limit = 100): Promise<InscriptionData[]> {
-    const signatures = await this.connection.getSignaturesForAddress(new PublicKey(address), { limit: Math.min(1000, Math.max(1, limit)) });
+    const allSignatures = await this.connection.getSignaturesForAddress(new PublicKey(address), { limit: Math.min(1000, Math.max(1, limit)) });
+    // RPC indexes Memo text; skip deployments/transfers before loading full transactions.
+    const signatures = allSignatures.filter(s => !s.err && s.memo?.includes('Basalt'));
     const results: InscriptionData[] = [];
     // Small batches avoid both serial N+1 latency and unbounded RPC concurrency.
     for (let i = 0; i < signatures.length; i += 4) {

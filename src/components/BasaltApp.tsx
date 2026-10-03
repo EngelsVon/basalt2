@@ -235,7 +235,7 @@ export const BasaltApp: React.FC = () => {
                 <Heart className="w-5 h-5 text-white" />
               </div>
               <h1 className="text-2xl font-bold text-basalt-900">Basalt</h1>
-              <span className="text-sm text-basalt-500 bg-basalt-100 px-2 py-1 rounded-full">
+              <span className="hidden sm:inline-flex text-sm text-basalt-500 bg-basalt-100 px-2 py-1 rounded-full">
                 玄武岩 - 永恒的爱情见证
               </span>
             </div>
@@ -498,14 +498,14 @@ export const BasaltApp: React.FC = () => {
                   查询铭刻记录
                 </h3>
                 
-                <div className="flex space-x-4 mb-4">
+                <div className="flex flex-wrap sm:flex-nowrap gap-2 mb-4">
                    <input
                      type="text"
                      value={searchQuery}
                      onChange={(e) => setSearchQuery(e.target.value)}
                      onKeyDown={(e) => { if (e.key === 'Enter') handleSearch(); }}
                      placeholder="输入关键词或地址进行搜索"
-                     className="input-field flex-1"
+                     className="input-field min-w-0 flex-1 basis-full sm:basis-auto"
                    />
                    <button
                      className="btn-primary"

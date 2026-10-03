@@ -65,6 +65,7 @@ const out = path.resolve('review_artifacts/new-devnet');
     await page.screenshot({ path: path.join(out, 'browser-desktop.png'), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     await page.screenshot({ path: path.join(out, 'browser-mobile.png'), fullPage: true });
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), 'Mobile viewport overflow');
     assert.equal(errors.length, 0, errors.join('\n'));
     const report = { status: 'PASS', signature, wallet: 'injected adapter, node-local signer', checks: ['connect', 'estimate', 'submit', 'confirm', 'record rendering', 'signature search', 'desktop/mobile render'], pageErrors: errors };
     fs.writeFileSync(path.join(out, 'browser-result.json'), JSON.stringify(report, null, 2));

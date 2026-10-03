@@ -35,16 +35,16 @@ const NETWORK_NAME = /testnet/i.test(SOLANA_RPC_URL)
       ? 'mainnet-beta'
       : 'unknown';
 
-// 优先费档位与 CU 限额（与前端统一）
+// Memo UTF-8 validation/logging needs a conservative shared CU budget; priority varies price, not execution headroom.
 function getPriorityPreset(preset = 'medium') {
   switch (preset) {
     case 'low':
-      return { cuLimit: 120_000, cuPriceMicroLamports: 20_000 };
+      return { cuLimit: 600_000, cuPriceMicroLamports: 20_000 };
     case 'high':
-      return { cuLimit: 300_000, cuPriceMicroLamports: 100_000 };
+      return { cuLimit: 600_000, cuPriceMicroLamports: 100_000 };
     case 'medium':
     default:
-      return { cuLimit: 200_000, cuPriceMicroLamports: 50_000 };
+      return { cuLimit: 600_000, cuPriceMicroLamports: 50_000 };
   }
 }
 
