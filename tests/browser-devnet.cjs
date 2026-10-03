@@ -72,4 +72,3 @@ const out = path.resolve('review_artifacts/new-devnet');
     console.log(JSON.stringify(report, null, 2));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
-
