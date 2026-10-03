@@ -71,9 +71,11 @@ async function json(route, body) {
     assert.equal(bySig[0].signature, receipt.signature);
     pass(`Send, confirm, read, signature search and exact fees ${type}/${priority}`, { signature: receipt.signature, charged, fee: fee.serviceFee });
   }
-  const history = await service.getInscriptionsByAddress(config.programId, 10);
+  const history = config.persistentRecords
+    ? (await service.getWalletRecords(wallet.publicKey.toBase58(), 'sent')).records
+    : await service.getInscriptionsByAddress(config.programId, 10);
   assert(history.length >= 3);
-  pass('New program address history', history.length);
+  pass('New program record history', history.length);
   // Reject wallet cancellation without sending another transaction.
   let fallback = 0;
   await assert.rejects(service.inscribeMessage('cancel test', wallet.publicKey, async () => { fallback++; }, undefined, async () => { throw new Error('User rejected'); }));

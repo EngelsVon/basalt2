@@ -79,6 +79,7 @@ export function RecoveryPanel({ service, wallet, lastReceipt }: { service: Solan
     <p role="status" className="text-sm">{busy?'正在读取链上账户…':`已显示 ${records.length} 条 · 目录总数 ${total}`}</p>
     {records.map(record=><div key={record.recoveryCode || record.signature}><RecoveryReceipt record={record}/>
       {record.previousSent && <button className="btn-secondary text-sm" disabled={busy} onClick={()=>{setCode(record.previousSent!);recover(record.previousSent!);}}>沿链查看发送者上一条</button>}
+      {record.previousReceived && <button className="btn-secondary text-sm" disabled={busy} onClick={()=>{setCode(record.previousReceived!);recover(record.previousReceived!);}}>沿链查看接收者上一条</button>}
     </div>)}
     {cursor && <button className="btn-secondary" disabled={busy} onClick={()=>list(true)}>加载更早记录</button>}
     <p className="text-xs text-basalt-500">链上目录仅覆盖升级后新写入的记录；旧 Memo 使用交易签名寻回。Devnet 是测试网络，可能重置；此版本不提供删除或修改记录的指令。</p>

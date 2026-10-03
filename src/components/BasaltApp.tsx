@@ -259,11 +259,11 @@ export const BasaltApp: React.FC = () => {
                 <Heart className="w-12 h-12 text-white" />
               </div>
               <h2 className="text-4xl font-bold text-basalt-900 mb-4">
-                将爱情永远铭刻在区块链上
+                将爱情铭刻在区块链上
               </h2>
               <p className="text-xl text-basalt-600 mb-8 leading-relaxed">
-                Basalt 让您可以将珍贵的爱情见证、承诺和回忆永久保存在 Solana 区块链上，<br/>
-                创造真正不可篡改的数字纪念碑。
+                Basalt 将珍贵的爱情见证、承诺和回忆写入 Solana 链上账户，<br/>
+                用寻回号和钱包目录再次找到。当前为可能重置的 Devnet 测试网络。
               </p>
               
               <div className="bg-basalt-50 rounded-xl p-6 mb-8">
@@ -271,7 +271,7 @@ export const BasaltApp: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-basalt-600">
                   <div className="flex items-center space-x-2">
                     <Heart className="w-4 h-4 text-red-500" />
-                    <span>永久铭刻信息</span>
+                    <span>链上存储信息</span>
                   </div>
                   <div className="flex items-center space-x-2">
                     <Search className="w-4 h-4 text-blue-500" />
@@ -355,7 +355,7 @@ export const BasaltApp: React.FC = () => {
                     <textarea
                       value={message}
                       onChange={(e) => setMessage(e.target.value.slice(0, 280))}
-                      placeholder="写下你想永久铭刻在链上的话..."
+                      placeholder="写下你想铭刻在链上的话..."
                       rows={4}
                       maxLength={280}
                       className="input-field"
@@ -477,7 +477,7 @@ export const BasaltApp: React.FC = () => {
                     ) : (
                       <>
                         <Heart className="w-5 h-5" />
-                        <span>永久铭刻到区块链</span>
+                        <span>铭刻到测试链</span>
                       </>
                     )}
                   </button>

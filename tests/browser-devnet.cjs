@@ -47,9 +47,9 @@ const out = path.resolve('review_artifacts/new-devnet');
     await page.getByText('加载中...', { exact: true }).first().waitFor({ state: 'hidden', timeout: 120000 }).catch(() => {});
     const message = 'Browser Devnet test ' + new Date().toISOString();
     await page.locator('textarea').fill(message);
-    const button = page.getByRole('button', { name: '永久铭刻到区块链' });
+    const button = page.getByRole('button', { name: '铭刻到测试链' });
     await button.waitFor();
-    await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(b => b.textContent.includes('永久铭刻到区块链') && !b.disabled), { timeout: 30000 });
+    await page.waitForFunction(() => Array.from(document.querySelectorAll('button')).some(b => b.textContent.includes('铭刻到测试链') && !b.disabled), { timeout: 30000 });
     const dialogPromise = page.waitForEvent('dialog', { timeout: 120000 });
     await button.click();
     const dialog = await dialogPromise;
@@ -72,3 +72,4 @@ const out = path.resolve('review_artifacts/new-devnet');
     console.log(JSON.stringify(report, null, 2));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
+
