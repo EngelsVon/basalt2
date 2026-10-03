@@ -3,7 +3,7 @@ const { HttpsProxyAgent } = require('https-proxy-agent');
 const fetch = require('node-fetch');
 const endpoint = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
 const proxy = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
-const agent = proxy ? new HttpsProxyAgent(proxy) : undefined;
+const agent = proxy ? new HttpsProxyAgent(proxy, { keepAlive: true, maxSockets: 4 }) : undefined;
 function rpcFetch(url, init = {}) { return fetch(url, { ...init, agent, timeout: 20000 }); }
 function createConnection() { return new Connection(endpoint, { commitment: 'confirmed', fetch: rpcFetch }); }
 async function confirm(connection, signature, lastValidBlockHeight) {

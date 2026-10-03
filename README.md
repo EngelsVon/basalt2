@@ -62,3 +62,30 @@ npm run dev
 ## 许可证
 
 MIT License
+
+
+## Devnet deployment (2026-10-03)
+
+Program: `GRJr1pdTLEqpWRiSvvWCLZViKqxD7tiMYpPUEjUUgZin`.
+Old program is left unchanged. The program address is public; deployment keys stay outside the repository.
+
+### Local startup
+
+1. `npm ci` and `npm --prefix server ci`.
+2. Copy `server/.env.example` to `server/.env` when setting up a new checkout. Set `SERVICE_FEE_WALLET` to the fee recipient. For this machine, enable `HTTPS_PROXY=http://127.0.0.1:7897`.
+3. Start API: `npm --prefix server start` (port 3001).
+4. Start UI: `npm run dev` (http://localhost:5173). Use a Devnet wallet with test SOL.
+5. Browser RPC requests pass through the API's allowlisted `/api/rpc` route; private keys never enter the API.
+
+### Verification
+
+- `npm run build` and `npm run lint`
+- `npm run test:devnet`: live Devnet transactions, readback, fees, and simulated rejection cases.
+- `npm run test:browser`: Chrome headless UI test with an injected wallet adapter signing via the local Node process. Requires Chrome, both servers, and `~/.config/solana/id.json`; it spends test SOL. This tests the adapter flow, not the actual Phantom extension UI.
+- Reports/screenshots are saved under `review_artifacts/new-devnet` (ignored by Git).
+
+### Deployment and upgrades
+
+Build artifacts in GitHub Actions embed the declared program ID. Deploy the matching `.so` with the program keypair and the existing upgrade authority; do not generate a new ID during an upgrade. The local program key is `~/.config/solana/basalt-devnet-20261003-keypair.json`, while the upgrade/fee payer wallet is `~/.config/solana/id.json`. Keep backups outside Git.
+
+`node server/scripts/init_config.js` initializes the config once and skips an existing config. Existing config changes require an authorized on-chain update, not just an `.env` edit.

@@ -18,7 +18,7 @@ on:
       - '.github/workflows/build-sbf.yml'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -110,303 +110,53 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy }}
     needs: build
     runs-on: ubuntu-22.04
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download build artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
           name: basalt_sbf_artifacts
           path: artifacts
-
-      - name: Install Solana toolchain v3.0.1
-        env:
-          SOLANA_VERSION: v3.0.1
+      - name: Install pinned Solana CLI
         shell: bash
         run: |
-          set -euxo pipefail
-          INSTALL_BASE="$HOME/.local/share/solana/install"
-          ACTIVE_BIN="$INSTALL_BASE/active_release/bin"
-          if ! command -v solana >/dev/null 2>&1; then
-            # Try official installer with retries
-            for i in 1 2 3; do
-              if curl -fsSL --retry 6 --retry-all-errors --connect-timeout 20 "https://release.anza.xyz/${SOLANA_VERSION}/install" | sh -s -; then
-                break
-              fi
-              echo "installer attempt $i failed, retrying in 5s..." >&2
-              sleep 5
-            done
-            # Fallback to GitHub Releases tarball if installer didn't provision active_release
-            if [ ! -x "${ACTIVE_BIN}/solana" ]; then
-              mkdir -p "${INSTALL_BASE}"
-              cd "${INSTALL_BASE}"
-              TARBALL="solana-release-x86_64-unknown-linux-gnu.tar.bz2"
-              URL_GH="https://github.com/anza-xyz/agave/releases/download/${SOLANA_VERSION}/${TARBALL}"
-              URL_ALT="https://release.anza.xyz/${SOLANA_VERSION}/${TARBALL}"
-              curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_GH}" || \
-              curl -fL --retry 6 --retry-all-errors --connect-timeout 20 -o "${TARBALL}" "${URL_ALT}"
-              tar -xjf "${TARBALL}"
-              BIN_DIR="$(dirname "$(find . -type f -name solana | head -n1)")"
-              [ -n "${BIN_DIR}" ] || { echo "::error::Failed to locate solana binary after extracting tarball"; exit 1; }
-              rm -rf "${ACTIVE_BIN%/bin}"
-              mkdir -p "$(dirname "${ACTIVE_BIN%/bin}")"
-              ln -s "$(realpath "${BIN_DIR%/bin}")" "${ACTIVE_BIN%/bin}"
-            fi
-            echo "${ACTIVE_BIN}" >> "$GITHUB_PATH"
-          fi
-          # Sanity checks (absolute path and PATH)
-          "${ACTIVE_BIN}/solana" --version
-          solana --version || true
-          ls -la "${ACTIVE_BIN}"
-      
-      - name: Install Rust toolchain (Cargo 1.95.0 (Rust 2024 compatible))
-        shell: bash
-        run: |
-          set -euxo pipefail
-          curl -fsSL --retry 6 --retry-all-errors --connect-timeout 15 https://sh.rustup.rs | sh -s -- -y
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          "$HOME/.cargo/bin/rustup" toolchain install 1.95.0 --profile minimal
-          "$HOME/.cargo/bin/rustup" default 1.95.0
-          "$HOME/.cargo/bin/cargo" --version
-
-      - name: Configure Solana and write keypairs
+          set -euo pipefail
+          curl -fL --retry 3 https://github.com/anza-xyz/agave/releases/download/v3.0.1/solana-release-x86_64-unknown-linux-gnu.tar.bz2 -o /tmp/solana.tar.bz2
+          tar -xjf /tmp/solana.tar.bz2 -C /tmp
+          echo /tmp/solana-release/bin >> "$GITHUB_PATH"
+      - name: Validate persistent deployment keys and Devnet
         shell: bash
         env:
-          PAYER_KEY: ${{ secrets.SOLANA_PAYER_KEYPAIR_JSON || secrets.SOLANA_KEYPAIR_JSON }}
-          PROGRAM_KEY: ${{ secrets.SOLANA_PROGRAM_KEYPAIR_JSON || secrets.SOLANA_KEYPAIR_JSON }}
-          RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+          PAYER_KEY: ${{ secrets.SOLANA_PAYER_KEYPAIR_JSON }}
+          PROGRAM_KEY: ${{ secrets.SOLANA_PROGRAM_KEYPAIR_JSON }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
+          test -n "$PAYER_KEY" && test -n "$PROGRAM_KEY" || { echo 'Configure persistent payer and program key secrets before deployment'; exit 1; }
+          umask 077
           mkdir -p "$HOME/.config/solana"
-          # Generate ephemeral payer (no secrets)
-          solana-keygen new --no-bip39-passphrase --silent -o "$HOME/.config/solana/id.json" -f
-          chmod 600 "$HOME/.config/solana/id.json"
-
-          # Use provided RPC if any, otherwise default to Devnet
-          solana config set --url "${RPC_URL:-https://api.devnet.solana.com}"
-          solana config get
-          echo "Payer pubkey: $(solana address)"
-
-          # Devnet airdrop for the ephemeral payer
-          for i in 1 2 3; do
-            solana airdrop 2 && break || { echo "airdrop attempt $i failed"; sleep 5; }
-          done
-          solana balance || true
-
-          # Program keypair from build artifacts (with fallback to repo)
-          PROG_KEY_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription-keypair.json 2>/dev/null | head -n1 || true)"
-          if [ -n "$PROG_KEY_CANDIDATE" ] && [ -f "$PROG_KEY_CANDIDATE" ]; then
-            PROG_KEY="$PROG_KEY_CANDIDATE"
-            echo "[info] Using program keypair from artifacts: $PROG_KEY"
-          elif [ -f programs/output/basalt_inscription-keypair.json ]; then
-            PROG_KEY="programs/output/basalt_inscription-keypair.json"
-            echo "[info] Using program keypair from repo: $PROG_KEY"
-          else
-            echo "::error::Program keypair not found in artifacts or repo (programs/output)"; exit 2
-          fi
-          mkdir -p programs/output
-          if [ "$PROG_KEY" != "programs/output/basalt_inscription-keypair.json" ]; then
-            cp -f "$PROG_KEY" programs/output/basalt_inscription-keypair.json
-          fi
-          chmod 600 programs/output/basalt_inscription-keypair.json
-          echo "Program pubkey: $(solana address -k programs/output/basalt_inscription-keypair.json)"
-
-      - name: Verify declare_id matches program pubkey
-        shell: bash
-        run: |
-          set -euxo pipefail
-          echo "[info] Ensuring declare_id matches program keypair; auto-fix if needed"
-          ACTUAL=$(solana address -k programs/output/basalt_inscription-keypair.json)
-          DECLARED="$( (grep -RhoE 'declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)' programs/basalt_inscription/src/lib.rs | head -n1 | sed -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/\1/') || true )"
-          if [ -z "${DECLARED:-}" ]; then
-            echo "::warning::declare_id! not found in programs/basalt_inscription/src/lib.rs — skipping auto-fix"
-          else
-            echo "Declared: $DECLARED"
-            echo "Actual:   $ACTUAL"
-            if [ "$DECLARED" != "$ACTUAL" ]; then
-              echo "::warning::declare_id != keypair pubkey; rewriting to $ACTUAL and rebuilding"
-              sed -i -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/declare_id!("'"$ACTUAL"'")/' programs/basalt_inscription/src/lib.rs
-              # Rebuild SBF to embed the new declare_id (run inside the program directory)
-              if ! command -v cargo-build-sbf >/dev/null 2>&1; then
-                BUILDER="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
-              else
-                BUILDER="cargo-build-sbf"
-              fi
-              pushd programs/basalt_inscription
-              # Pre-generate a compatible lockfile with Cargo 1.85
-              "$HOME/.cargo/bin/cargo" --version || true
-              test -f Cargo.lock || "$HOME/.cargo/bin/cargo" generate-lockfile
-              "$BUILDER" --tools-version v1.57 -- --locked
-              popd
-              # Export rebuilt .so path for later step to prefer
-              if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
-                echo "SO_REBUILT=programs/basalt_inscription/target/deploy/basalt_inscription.so" >> "$GITHUB_ENV"
-              fi
-            fi
-          fi
-
-      - name: Export PROGRAM_ID for later steps
-        shell: bash
-        run: |
-          set -euxo pipefail
-          PID=$(solana address -k programs/output/basalt_inscription-keypair.json)
+          printf '%s' "$PAYER_KEY" > "$HOME/.config/solana/id.json"
+          printf '%s' "$PROGRAM_KEY" > "$HOME/.config/solana/program.json"
+          PID=$(solana address -k "$HOME/.config/solana/program.json")
+          grep -F "declare_id!(\"$PID\")" programs/basalt_inscription/src/lib.rs
+          solana config set --url https://api.devnet.solana.com
+          test "$(solana genesis-hash)" = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG'
           echo "PROGRAM_ID=$PID" >> "$GITHUB_ENV"
-          echo "PROGRAM_ID: $PID"
-
-      - name: Deploy program to Devnet
+          solana balance
+      - name: Deploy exact build artifact (never change program ID)
         shell: bash
         run: |
-          set -euxo pipefail
-          # Prefer freshly rebuilt .so if available (ensures declare_id is aligned)
-          if [ -n "${SO_REBUILT:-}" ] && [ -f "$SO_REBUILT" ]; then
-            SO="$SO_REBUILT"
-            echo "[info] Using rebuilt program .so: $SO"
-          else
-            SO_CANDIDATE="$(ls -1 artifacts/**/basalt_inscription.so 2>/dev/null | head -n1 || true)"
-            if [ -n "$SO_CANDIDATE" ] && [ -f "$SO_CANDIDATE" ]; then
-              SO="$SO_CANDIDATE"
-              echo "[info] Using program .so from artifacts: $SO"
-            elif [ -f programs/output/basalt_inscription.so ]; then
-              SO="programs/output/basalt_inscription.so"
-              echo "[info] Using program .so from repo: $SO"
-            else
-              echo "::error::Program .so not found in rebuilt target, artifacts, or repo (programs/output)"; exit 2
-            fi
-          fi
-          # Ensure Devnet RPC and fund deployer to target balance (retry/backoff)
-          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
-          PAYER=$(solana address)
-          TARGET_SOL="${TARGET_SOL:-6}"
-          MAX_AIRDROP_ATTEMPTS="${MAX_AIRDROP_ATTEMPTS:-6}"
-          echo "[info] Ensuring deployer $PAYER has at least ${TARGET_SOL} SOL on Devnet"
-          for i in $(seq 1 "$MAX_AIRDROP_ATTEMPTS"); do
-            BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
-            if awk -v bal="$BAL" -v tgt="$TARGET_SOL" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
-              break
-            fi
-            echo "[info] Airdrop attempt $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
-            solana airdrop 2 "$PAYER" || true
-            sleep $(( 2 * i ))
-          done
-          echo "[info] Deployer balance:"
-          solana balance || true
-          # Manual top-up window if still below target
-          BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
-          if ! awk -v bal="$BAL" -v tgt="$TARGET_SOL" 'BEGIN { exit (bal>=tgt) ? 0 : 1 }'; then
-            echo "::notice::Devnet payer address: $PAYER"
-            echo "::notice::RPC: ${SOLANA_RPC_URL}"
-            echo "::warning::Balance ${BAL:-0} SOL < target ${TARGET_SOL} SOL; sleeping 300s for manual top-up..."
-            sleep 300
-          fi
-          echo "[info] Deployer balance after optional wait:"
-          solana balance || true
-          echo "[info] Attempting deploy to declared/programs/output program id"
-          set +e
-          DEPLOY_OUT=$(solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json 2>&1)
-          DEPLOY_CODE=$?
-          set -e
-          echo "$DEPLOY_OUT"
-          if [ $DEPLOY_CODE -ne 0 ] && echo "$DEPLOY_OUT" | grep -q "does not match authority provided"; then
-            echo "::warning::Existing program at this address has a different upgrade authority. Falling back to a fresh program id."
-            # Generate a fresh program id and ensure declare_id matches, then rebuild
-            solana-keygen new --no-bip39-passphrase --silent -o programs/output/basalt_inscription-keypair.json -f
-            chmod 600 programs/output/basalt_inscription-keypair.json
-            NEW_PID=$(solana address -k programs/output/basalt_inscription-keypair.json)
-            echo "::warning::Using NEW PROGRAM_ID: $NEW_PID; rewriting declare_id and rebuilding"
-            # Rewrite declare_id in source to NEW_PID
-            sed -i -E 's/declare_id!\("([1-9A-HJ-NP-Za-km-z]{32,44})"\)/declare_id!("'"$NEW_PID"'")/' programs/basalt_inscription/src/lib.rs
-            # Top up again before redeploy in case buffer rent was deducted
-            for i in $(seq 1 "${MAX_AIRDROP_ATTEMPTS:-6}"); do
-              BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
-              if awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal<tgt) ? 1 : 0 }'; then
-                 break
-               fi
-               echo "[info] Airdrop attempt (redeploy) $i: requesting 2 SOL to $PAYER (current balance: ${BAL:-0} SOL)"
-               solana airdrop 2 "$PAYER" || true
-               sleep $(( 2 * i ))
-             done
-             # Manual top-up window before redeploy if still below target
-             BAL="$(solana balance 2>/dev/null | awk '{print $1}')"
-             if ! awk -v bal="$BAL" -v tgt="${TARGET_SOL:-6}" 'BEGIN { exit (bal>=tgt) ? 0 : 1 }'; then
-               echo "::notice::Devnet payer address: $PAYER"
-               echo "::notice::RPC: ${SOLANA_RPC_URL}"
-               echo "::warning::Balance ${BAL:-0} SOL < target ${TARGET_SOL} SOL; sleeping 300s for manual top-up before redeploy..."
-               sleep 300
-             fi
-             # Rebuild with new declare_id to ensure runtime matches (run inside program dir)
-             if ! command -v cargo-build-sbf >/dev/null 2>&1; then
-               BUILDER="$HOME/.local/share/solana/install/active_release/bin/cargo-build-sbf"
-             else
-               BUILDER="cargo-build-sbf"
-             fi
-             pushd programs/basalt_inscription
-             # Pre-generate a compatible lockfile with Cargo 1.85
-             "$HOME/.cargo/bin/cargo" --version || true
-             test -f Cargo.lock || "$HOME/.cargo/bin/cargo" generate-lockfile
-             "$BUILDER" --tools-version v1.57 -- --locked
-             popd
-             if [ -f programs/basalt_inscription/target/deploy/basalt_inscription.so ]; then
-               SO="programs/basalt_inscription/target/deploy/basalt_inscription.so"
-             fi
-             # Update env for later steps
-             echo "PROGRAM_ID=$NEW_PID" >> "$GITHUB_ENV"
-             # Redeploy with new id (will exit on failure due to set -e)
-             solana program deploy "$SO" --program-id programs/output/basalt_inscription-keypair.json
-           elif [ $DEPLOY_CODE -ne 0 ]; then
-             echo "::error::Program deploy failed with unexpected error"; exit $DEPLOY_CODE
-           fi
-
-      - name: Persist PROGRAM_ID and keypair back to repo
-        shell: bash
-        run: |
-          set -euxo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Update Anchor.toml devnet program id
-          PID="${PROGRAM_ID:-$(solana address -k programs/output/basalt_inscription-keypair.json)}"
-          # Use perl for robust multiline, avoiding fragile sed escaping
-          env PID="$PID" perl -0777 -i -pe 's/(\[programs\.devnet\][\s\S]*?basalt_inscription\s*=\s*")[^"]+("\s*)/\1$ENV{PID}\2/s' Anchor.toml || true
-          # Optionally update server/.env.example PROGRAM_ID (do not touch .env)
-          if [ -f server/.env.example ]; then
-            sed -i -E "s/^(PROGRAM_ID=).*/\1${PID}/" server/.env.example || true
-          fi
-          git add programs/output/basalt_inscription-keypair.json Anchor.toml server/.env.example || true
-          if ! git diff --cached --quiet; then
-            git commit -m "ci: persist PROGRAM_ID ${PID} and program keypair; align Anchor.toml"
-            git push
-          else
-            echo "[info] Nothing to commit"
-          fi
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+          set -euo pipefail
+          SO=artifacts/programs/basalt_inscription/target/deploy/basalt_inscription.so
+          test -f "$SO"
+          solana program deploy "$SO" --program-id "$HOME/.config/solana/program.json" --url devnet --use-rpc
+          solana program show "$PROGRAM_ID" --url devnet
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Install server deps
-        working-directory: server
-        run: npm ci --prefer-offline --no-audit
-
-      - name: Initialize on-chain config (Config PDA)
-        working-directory: server
+          node-version: '22'
+      - run: npm ci --prefix server --ignore-scripts
+      - name: Initialize config using deployment authority
         env:
-          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
-          PROGRAM_ID: ${{ env.PROGRAM_ID }}
-          SERVICE_FEE_WALLET: ${{ secrets.SERVICE_FEE_WALLET }}
-          SERVICE_FEE_BPS: ${{ secrets.SERVICE_FEE_BPS }}
-          MIN_CU_PRICE_MICROLAMPORTS: ${{ secrets.MIN_CU_PRICE_MICROLAMPORTS }}
-          MIN_CU_LIMIT: ${{ secrets.MIN_CU_LIMIT }}
-          DEPLOYER_KEYPAIR: $HOME/.config/solana/id.json
-        run: |
-          set -euxo pipefail
-          # Fallbacks for private repo without secrets
-          export SOLANA_RPC_URL="${SOLANA_RPC_URL:-https://api.devnet.solana.com}"
-          export SERVICE_FEE_WALLET="${SERVICE_FEE_WALLET:-$(solana address)}"
-          export SERVICE_FEE_BPS="${SERVICE_FEE_BPS:-100}"
-          export MIN_CU_PRICE_MICROLAMPORTS="${MIN_CU_PRICE_MICROLAMPORTS:-20000}"
-          export MIN_CU_LIMIT="${MIN_CU_LIMIT:-300000}"
-          # Ensure DEPLOYER_KEYPAIR uses expanded HOME path (env block does not expand $HOME)
-          export DEPLOYER_KEYPAIR="$HOME/.config/solana/id.json"
-          test -f "$DEPLOYER_KEYPAIR" || { echo "::error::Deployer keypair not found at $DEPLOYER_KEYPAIR"; ls -la "$HOME/.config/solana" || true; exit 3; }
-          node scripts/init_config.js
+          SOLANA_RPC_URL: https://api.devnet.solana.com
+          SERVICE_FEE_WALLET: ${{ secrets.SERVICE_FEE_WALLET || '6TnyoYQzXqZV4Awu8kiUYX343MTAa7dTx7tLiBzcoT4Z' }}
+          SERVICE_FEE_BPS: '50'
+        run: node server/scripts/init_config.js

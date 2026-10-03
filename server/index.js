@@ -108,8 +108,8 @@ app.use(express.urlencoded({ extended: true }));
 
 // 速率限制
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15分钟
-  max: 100, // 限制每个IP 15分钟内最多100个请求
+  windowMs: Number(process.env.RATE_LIMIT_WINDOW_MS || 60000),
+  max: Number(process.env.RATE_LIMIT_MAX || 300),
   message: {
     error: '请求过于频繁，请稍后再试'
   }
@@ -227,7 +227,7 @@ app.post('/api/inscription/calculate-fee', async (req, res) => {
     // 如果有链上配置，使用链上 service_fee_bps，否则使用本地 SERVICE_FEE_RATE
     const bps = onchain ? onchain.serviceFeeBps : Math.round((isNaN(SERVICE_FEE_RATE) ? 0 : SERVICE_FEE_RATE) * 100);
 
-    // 服务费 = 优先费的 bps/10000（向下取整以避免前端高估；合约内部使用向上取整，前端仅做展示与预估）
+    // 服务费 = 优先费的 bps/10000，向上取整，与合约一致
     const rawServiceFee = Math.ceil(priorityFeeLamports * (bps / 10000));
     const serviceFee = Math.max(rawServiceFee, MIN_SERVICE_FEE_LAMPORTS);
 
