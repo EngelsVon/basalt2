@@ -27,6 +27,51 @@ pub mod basalt_inscription {
         Ok(())
     }
 
+    /// Immutable content with deterministic per-wallet indexes; no transaction archive needed.
+    pub fn inscribe_record(ctx: Context<InscribeRecord>, nonce: [u8; 16], recipient: Pubkey, kind: u8, message: String, sent_seq: u64, received_seq: u64, cu_limit: u32, cu_price_micro_lamports: u64) -> Result<()> {
+        require!(!message.trim().is_empty() && message.as_bytes().len() <= Record::MAX_BYTES && kind <= 2, ErrorCode::InvalidRecord);
+        require!(recipient != Pubkey::default(), ErrorCode::InvalidRecord);
+        require!(ctx.accounts.sent_head.count == sent_seq && ctx.accounts.inbox_head.count == received_seq, ErrorCode::StaleIndex);
+        require!(cu_limit >= ctx.accounts.config.min_cu_limit && cu_price_micro_lamports >= ctx.accounts.config.min_cu_price, ErrorCode::InvalidConfig);
+        let sysvar = ctx.accounts.instructions_sysvar.to_account_info();
+        let current = anchor_lang::solana_program::sysvar::instructions::load_current_index_checked(&sysvar)? as usize;
+        let cb = anchor_lang::solana_program::pubkey!("ComputeBudget111111111111111111111111111111");
+        let mut limit = None;
+        let mut price = None;
+        for i in 0..current {
+            let ix = anchor_lang::solana_program::sysvar::instructions::load_instruction_at_checked(i, &sysvar)?;
+            if ix.program_id == cb && ix.data.len() == 5 && ix.data[0] == 2 { limit = Some(u32::from_le_bytes(ix.data[1..5].try_into().unwrap())); }
+            if ix.program_id == cb && ix.data.len() == 9 && ix.data[0] == 3 { price = Some(u64::from_le_bytes(ix.data[1..9].try_into().unwrap())); }
+        }
+        require!(limit == Some(cu_limit) && price == Some(cu_price_micro_lamports), ErrorCode::ComputeBudgetLimitMismatch);
+        let (_, fee) = calculate_fees(cu_limit, cu_price_micro_lamports, ctx.accounts.config.service_fee_bps)?;
+        if fee > 0 {
+            anchor_lang::solana_program::program::invoke(
+                &anchor_lang::solana_program::system_instruction::transfer(&ctx.accounts.payer.key(), &ctx.accounts.service_fee_wallet.key(), fee),
+                &[ctx.accounts.payer.to_account_info(), ctx.accounts.service_fee_wallet.to_account_info(), ctx.accounts.system_program.to_account_info()],
+            )?;
+        }
+        let record = &mut ctx.accounts.record;
+        record.version = 1;
+        record.sender = ctx.accounts.payer.key();
+        record.recipient = recipient;
+        record.timestamp = Clock::get()?.unix_timestamp;
+        record.kind = kind;
+        record.nonce = nonce;
+        record.previous_sent = ctx.accounts.sent_head.last;
+        record.previous_received = ctx.accounts.inbox_head.last;
+        record.message = message;
+        ctx.accounts.sent_entry.record = record.key();
+        ctx.accounts.inbox_entry.record = record.key();
+        ctx.accounts.sent_head.wallet = ctx.accounts.payer.key();
+        ctx.accounts.inbox_head.wallet = recipient;
+        ctx.accounts.sent_head.count = sent_seq.checked_add(1).ok_or(ErrorCode::IndexOverflow)?;
+        ctx.accounts.inbox_head.count = received_seq.checked_add(1).ok_or(ErrorCode::IndexOverflow)?;
+        ctx.accounts.sent_head.last = record.key();
+        ctx.accounts.inbox_head.last = record.key();
+        Ok(())
+    }
+
     pub fn inscribe(ctx: Context<Inscribe>, memo_hash: [u8; 32], cu_limit: u32, cu_price_micro_lamports: u64) -> Result<()> {
         // 校验 ComputeBudget 参数下限
         require!(cu_limit >= ctx.accounts.config.min_cu_limit, ErrorCode::CuLimitTooLow);
@@ -165,6 +210,54 @@ pub struct Inscribe<'info> {
     pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+#[instruction(nonce: [u8; 16], recipient: Pubkey, kind: u8, message: String, sent_seq: u64, received_seq: u64)]
+pub struct InscribeRecord<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(seeds = [b"config"], bump)]
+    pub config: Account<'info, Config>,
+    /// CHECK: constrained fee recipient
+    #[account(mut, address = config.service_fee_wallet)]
+    pub service_fee_wallet: UncheckedAccount<'info>,
+    #[account(init, payer = payer, space = 8 + Record::SIZE, seeds = [b"record", payer.key().as_ref(), nonce.as_ref()], bump)]
+    pub record: Account<'info, Record>,
+    #[account(init_if_needed, payer = payer, space = 8 + WalletHead::SIZE, seeds = [b"sent", payer.key().as_ref()], bump)]
+    pub sent_head: Account<'info, WalletHead>,
+    #[account(init_if_needed, payer = payer, space = 8 + WalletHead::SIZE, seeds = [b"inbox", recipient.as_ref()], bump)]
+    pub inbox_head: Account<'info, WalletHead>,
+    #[account(init, payer = payer, space = 8 + 32, seeds = [b"sent-entry", payer.key().as_ref(), &sent_seq.to_le_bytes()], bump)]
+    pub sent_entry: Account<'info, WalletEntry>,
+    #[account(init, payer = payer, space = 8 + 32, seeds = [b"inbox-entry", recipient.as_ref(), &received_seq.to_le_bytes()], bump)]
+    pub inbox_entry: Account<'info, WalletEntry>,
+    /// CHECK: constrained to the real instructions sysvar
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[account]
+pub struct Record {
+    pub version: u8,
+    pub sender: Pubkey,
+    pub recipient: Pubkey,
+    pub timestamp: i64,
+    pub kind: u8,
+    pub nonce: [u8; 16],
+    pub previous_sent: Pubkey,
+    pub previous_received: Pubkey,
+    pub message: String,
+}
+impl Record {
+    pub const MAX_BYTES: usize = 560;
+    pub const SIZE: usize = 1 + 32 + 32 + 8 + 1 + 16 + 32 + 32 + 4 + Self::MAX_BYTES;
+}
+#[account]
+pub struct WalletHead { pub wallet: Pubkey, pub count: u64, pub last: Pubkey }
+impl WalletHead { pub const SIZE: usize = 32 + 8 + 32; }
+#[account]
+pub struct WalletEntry { pub record: Pubkey }
+
 #[account]
 pub struct Config {
     pub authority: Pubkey,
@@ -191,6 +284,12 @@ pub struct InscribedEvent {
 
 #[error_code]
 pub enum ErrorCode {
+    #[msg("invalid persistent record")]
+    InvalidRecord,
+    #[msg("wallet index changed; rebuild transaction")]
+    StaleIndex,
+    #[msg("wallet index overflow")]
+    IndexOverflow,
     #[msg("invalid configuration")]
     InvalidConfig,
     #[msg("fee overflow")]
